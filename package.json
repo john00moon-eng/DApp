@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:css": "tailwindcss -i ./src/style.css -o ./dist/app.css --minify",
+    "build:css": "tailwindcss -i \"./dapp/пульс/src/style.css\" -o ./dist/app.css --minify",
     "build": "vite build",
     "preview": "vite preview"
   },
