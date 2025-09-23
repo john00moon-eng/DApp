@@ -131,7 +131,7 @@ app.post('/api/zapier-hook', async (req, res) => {
 
 app.get('/api/zapier-hook/latest', (req, res) => {
   if (history.length === 0) {
-    return res.status(404).json({ error: 'No events received yet' });
+    return res.status(204).end();
   }
 
   return res.json(history[0]);
