@@ -85,13 +85,19 @@ function renderChart() {
   }));
 
   candleSeries.setData(candleData);
-  candleSeries.setMarkers(payload.signals.map((signal) => ({
-    time: isoToUnix(signal.timestamp),
-    position: signal.type === 'BUY' ? 'belowBar' : 'aboveBar',
-    color: signal.type === 'BUY' ? '#46C078' : '#DC5A78',
-    shape: signal.type === 'BUY' ? 'arrowUp' : 'arrowDown',
-    text: `${signal.type} ${formatPrice(signal.price)}`
-  })));
+  candleSeries.setMarkers(
+    payload.signals.map((signal) => {
+      const priceInfo = formatPrice(signal.price);
+
+      return {
+        time: isoToUnix(signal.timestamp),
+        position: signal.type === 'BUY' ? 'belowBar' : 'aboveBar',
+        color: signal.type === 'BUY' ? '#46C078' : '#DC5A78',
+        shape: signal.type === 'BUY' ? 'arrowUp' : 'arrowDown',
+        text: `${signal.type} ${priceInfo.plainText}`
+      };
+    })
+  );
 
   chart.timeScale().fitContent();
 
@@ -115,9 +121,10 @@ function renderSignals() {
     badge.className = `badge ${signal.type === 'BUY' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`;
     badge.textContent = signal.type === 'BUY' ? 'Buy сигнал' : 'Sell сигнал';
 
+    const priceInfo = formatPrice(signal.price);
     const price = document.createElement('div');
     price.className = 'text-lg font-bold';
-    price.textContent = formatPrice(signal.price);
+    price.innerHTML = formatPriceMarkup(priceInfo);
 
     header.append(badge, price);
 
@@ -276,6 +283,15 @@ function setActiveSignal(signal, element) {
 
   if (detailsContainer) {
     const confidence = Math.round(signal.confidence * 100);
+    const entryPriceInfo = formatPrice(signal.price);
+    const takeProfitInfo = formatPrice(signal.takeProfit);
+    const stopLossInfo = formatPrice(signal.stopLoss);
+    const entryPriceMarkup = formatPriceMarkup(entryPriceInfo, 'ml-2 text-xs uppercase tracking-wide text-muted');
+    const takeProfitMarkup = formatPriceMarkup(
+      takeProfitInfo,
+      'ml-2 text-[10px] uppercase tracking-wide text-muted'
+    );
+    const stopLossMarkup = formatPriceMarkup(stopLossInfo, 'ml-2 text-[10px] uppercase tracking-wide text-muted');
     detailsContainer.innerHTML = `
       <div class="space-y-4">
         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-muted">
@@ -283,7 +299,7 @@ function setActiveSignal(signal, element) {
           <span>${payload.timeframe}</span>
         </div>
         <div class="text-2xl font-bold ${signal.type === 'BUY' ? 'text-success' : 'text-danger'}">
-          ${signal.type === 'BUY' ? 'Покупка' : 'Продажа'} @ ${formatPrice(signal.price)}
+          ${signal.type === 'BUY' ? 'Покупка' : 'Продажа'} @ ${entryPriceMarkup}
         </div>
         <p class="text-sm leading-relaxed text-muted">${signal.context}</p>
         <div class="grid grid-cols-2 gap-3 text-xs uppercase tracking-wide text-muted">
@@ -297,11 +313,11 @@ function setActiveSignal(signal, element) {
           </div>
           <div class="rounded-xl bg-surface/80 p-3">
             <div class="text-[11px]">Take-profit</div>
-            <div class="mt-1 text-sm font-semibold text-success">${formatPrice(signal.takeProfit)}</div>
+            <div class="mt-1 text-sm font-semibold text-success">${takeProfitMarkup}</div>
           </div>
           <div class="rounded-xl bg-surface/80 p-3">
             <div class="text-[11px]">Stop-loss</div>
-            <div class="mt-1 text-sm font-semibold text-danger">${formatPrice(signal.stopLoss)}</div>
+            <div class="mt-1 text-sm font-semibold text-danger">${stopLossMarkup}</div>
           </div>
         </div>
       </div>
@@ -322,12 +338,48 @@ function isoToUnix(isoString) {
 }
 
 function formatPrice(value) {
-  return new Intl.NumberFormat('ru-RU', {
-    style: 'currency',
-    currency: payload.quoteAsset,
+  const ticker = payload.quoteAsset;
+  const currencyOverrides = {
+    USDT: 'USD',
+    USDC: 'USD',
+    USDX: 'USD'
+  };
+
+  const isoCurrency = currencyOverrides[ticker] || ticker;
+  const numberFormatOptions = {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
-  }).format(value);
+  };
+
+  let formatted;
+  let showTicker = false;
+
+  try {
+    formatted = new Intl.NumberFormat('ru-RU', {
+      ...numberFormatOptions,
+      style: 'currency',
+      currency: isoCurrency
+    }).format(value);
+    showTicker = isoCurrency !== ticker;
+  } catch {
+    formatted = new Intl.NumberFormat('ru-RU', numberFormatOptions).format(value);
+    showTicker = true;
+  }
+
+  return {
+    formatted,
+    plainText: showTicker ? `${formatted} ${ticker}` : formatted,
+    showTicker,
+    ticker
+  };
+}
+
+function formatPriceMarkup(priceInfo, tickerClass = 'ml-2 text-xs uppercase tracking-wide text-muted') {
+  if (!priceInfo.showTicker) {
+    return priceInfo.formatted;
+  }
+
+  return `${priceInfo.formatted} <span class="${tickerClass}">${priceInfo.ticker}</span>`;
 }
 
 function formatDateTime(isoString) {
