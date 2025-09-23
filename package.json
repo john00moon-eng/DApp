@@ -4,18 +4,25 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev:server": "node server/index.js",
+    "dev:client": "vite",
+    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "build:css": "tailwindcss -i \"./dapp/пульс/src/style.css\" -o ./dist/app.css --minify",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "NODE_ENV=production node server/index.js"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "vite": "^5.4.8"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "lightweight-charts": "^4.2.2"
   }
 }
