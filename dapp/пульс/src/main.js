@@ -26,6 +26,14 @@ const FALLBACK_TICKER_QUOTES = [
 ];
 const AUTOMATION_STATUS_ENDPOINT = '/api/zapier-hook/latest';
 const AUTOMATION_STATUS_REFRESH_INTERVAL = 60_000;
+const automationWebhookPortSource =
+  import.meta.env?.VITE_WEBHOOK_PORT ??
+  (typeof window !== 'undefined' ? window.location.port : undefined) ??
+  '3001';
+const automationWebhookPort =
+  typeof automationWebhookPortSource === 'string'
+    ? automationWebhookPortSource.trim() || '3001'
+    : String(automationWebhookPortSource ?? '3001');
 
 initHeroAnimations();
 
@@ -50,6 +58,7 @@ const coinSummaryStopLossEl = document.getElementById('coin-summary-stop-loss');
 const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-time');
 const automationStatusContainer = document.getElementById('automation-status');
 const automationStatusBadge = document.getElementById('automation-status-badge');
+const automationPortIndicator = document.getElementById('automation-port-indicator');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const tickerContent = document.getElementById('ticker-content');
 
@@ -144,7 +153,7 @@ function scheduleTickerRefresh() {
 }
 
 function initAutomationStatus() {
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     return;
   }
 
@@ -157,7 +166,7 @@ function scheduleAutomationStatusRefresh() {
     clearInterval(automationStatusTimerId);
   }
 
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     automationStatusTimerId = null;
     return;
   }
@@ -172,7 +181,7 @@ async function refreshAutomationStatus() {
     return;
   }
 
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     return;
   }
 
@@ -183,9 +192,12 @@ async function refreshAutomationStatus() {
       headers: { Accept: 'application/json' }
     });
 
+    const resolvedPort = resolveAutomationEndpointPort(response);
+
     if (response.status === 204) {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+      renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
       return;
     }
 
@@ -198,6 +210,7 @@ async function refreshAutomationStatus() {
     if (!rawPayload) {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+      renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
       return;
     }
 
@@ -217,10 +230,16 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
     }
+
+    renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
   } catch (error) {
     console.error('Не удалось получить статус автоматизаций', error);
     latestAutomationEvent = null;
     renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
+    renderAutomationPortStatus(automationWebhookPort, {
+      statusLabel: 'недоступен',
+      isError: true
+    });
   } finally {
     automationStatusRefreshInProgress = false;
   }
@@ -838,8 +857,46 @@ function toggleAccordion(trigger, panel) {
   }
 }
 
+function renderAutomationPortStatus(port, options = {}) {
+  if (!automationPortIndicator) {
+    return;
+  }
+
+  const { statusLabel = null, isError = false } = options;
+  const normalizedPort =
+    typeof port === 'number' || typeof port === 'string' ? String(port).trim() : '';
+  const fallbackPort =
+    typeof automationWebhookPort === 'string'
+      ? automationWebhookPort.trim()
+      : String(automationWebhookPort ?? '');
+  const portText = normalizedPort || fallbackPort || '—';
+  const resolvedStatus = statusLabel || (isError ? 'недоступен' : 'OK');
+
+  automationPortIndicator.classList.remove('hidden', 'port-indicator--ok', 'port-indicator--error');
+  automationPortIndicator.classList.add(isError ? 'port-indicator--error' : 'port-indicator--ok');
+  const labelEl = automationPortIndicator.querySelector('.port-indicator__label');
+  const valueEl = automationPortIndicator.querySelector('.port-indicator__value');
+  const statusEl = automationPortIndicator.querySelector('.port-indicator__status');
+
+  if (labelEl) {
+    labelEl.textContent = 'Webhook порт';
+  }
+
+  if (valueEl) {
+    valueEl.textContent = portText;
+  }
+
+  if (statusEl) {
+    statusEl.textContent = resolvedStatus;
+  }
+
+  if (!valueEl || !statusEl) {
+    automationPortIndicator.textContent = `Webhook порт ${portText} • ${resolvedStatus}`;
+  }
+}
+
 function renderAutomationStatus(event, options = {}) {
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     return;
   }
 
@@ -947,6 +1004,29 @@ function renderAutomationStatus(event, options = {}) {
   }
 
   refreshActiveSignalAutomationSummary();
+}
+
+function resolveAutomationEndpointPort(source) {
+  const fallback = automationWebhookPort;
+  if (!source) {
+    return fallback;
+  }
+
+  const candidateUrl = typeof source === 'string' ? source : source?.url;
+  if (!candidateUrl) {
+    return fallback;
+  }
+
+  try {
+    const base =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'http://localhost';
+    const parsed = new URL(candidateUrl, base);
+    return parsed.port || fallback;
+  } catch (error) {
+    return fallback;
+  }
 }
 
 function refreshActiveSignalAutomationSummary() {

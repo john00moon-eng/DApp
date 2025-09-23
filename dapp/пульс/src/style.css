@@ -38,6 +38,30 @@
     @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide;
   }
 
+  .port-indicator {
+    @apply inline-flex items-center gap-2 rounded-full border border-grid/40 bg-surface/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted transition-colors;
+  }
+
+  .port-indicator__label {
+    @apply text-muted;
+  }
+
+  .port-indicator__value {
+    @apply font-mono text-xs;
+  }
+
+  .port-indicator__status {
+    @apply text-xs;
+  }
+
+  .port-indicator--ok {
+    @apply border-success/40 bg-success/10 text-success;
+  }
+
+  .port-indicator--error {
+    @apply border-danger/40 bg-danger/10 text-danger;
+  }
+
   .card {
     @apply border border-grid/40 bg-card/80 backdrop-blur rounded-2xl shadow-card;
   }
