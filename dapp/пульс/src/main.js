@@ -25,6 +25,8 @@ const FALLBACK_TICKER_QUOTES = [
   { symbol: 'DOGE', price: '$0,14', change: '+4.2%' }
 ];
 
+initHeroAnimations();
+
 const chartContainer = document.getElementById('chart-root');
 const signalsList = document.getElementById('signals-list');
 const detailsContainer = document.getElementById('signal-details');
@@ -852,4 +854,102 @@ function mockSubscribe() {
       resolve({ ok: true });
     }, 700);
   });
+}
+
+function initHeroAnimations() {
+  const heroSection = document.querySelector('[data-hero]');
+  if (!heroSection) {
+    return;
+  }
+
+  const heroItems = heroSection.querySelectorAll('[data-hero-item]');
+  if (!heroItems.length) {
+    return;
+  }
+
+  const mediaQuery = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)')
+    : null;
+  let observer = null;
+
+  const cleanupObserver = () => {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+  };
+
+  const resetHeroState = () => {
+    cleanupObserver();
+    heroSection.removeAttribute('data-hero-ready');
+    heroItems.forEach((item) => {
+      item.classList.remove('is-hero-visible');
+      item.style.removeProperty('--hero-delay');
+    });
+  };
+
+  const revealHeroItems = () => {
+    heroItems.forEach((item) => {
+      item.classList.add('is-hero-visible');
+    });
+  };
+
+  const startAnimation = () => {
+    cleanupObserver();
+    heroSection.setAttribute('data-hero-ready', 'true');
+
+    heroItems.forEach((item, index) => {
+      item.classList.remove('is-hero-visible');
+      item.style.setProperty('--hero-delay', `${index * 120}ms`);
+    });
+
+    const schedule = typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame.bind(window)
+      : (callback) => window.setTimeout(callback, 16);
+
+    const runReveal = () => {
+      schedule(() => {
+        revealHeroItems();
+      });
+    };
+
+    if ('IntersectionObserver' in window) {
+      observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              runReveal();
+              cleanupObserver();
+            }
+          });
+        },
+        {
+          threshold: 0.35
+        }
+      );
+      observer.observe(heroSection);
+    } else {
+      runReveal();
+    }
+  };
+
+  const handleMotionChange = (event) => {
+    if (event.matches) {
+      resetHeroState();
+    } else {
+      startAnimation();
+    }
+  };
+
+  if (mediaQuery?.matches) {
+    resetHeroState();
+  } else {
+    startAnimation();
+  }
+
+  if (typeof mediaQuery?.addEventListener === 'function') {
+    mediaQuery.addEventListener('change', handleMotionChange);
+  } else if (typeof mediaQuery?.addListener === 'function') {
+    mediaQuery.addListener(handleMotionChange);
+  }
 }
