@@ -196,6 +196,13 @@
         <div class="card p-6">
           <h3 class="text-lg font-semibold">Подписка на e-mail сигналы</h3>
           <p class="mt-3 text-sm leading-relaxed text-muted">Каждый сигнал дублируется на почту с деталями входа. Endpoint <code class="rounded bg-surface/70 px-2 py-1 text-xs text-muted">POST /api/subscribe-email</code> принимает адрес подписчика.</p>
+          <p class="mt-3 text-sm leading-relaxed text-muted">Чтобы подключить автоматизацию без TradingView API, отправляйте алерты на e-mail и обрабатывайте их в Zapier или другом сервисе интеграций.</p>
+          <a href="/docs#email" class="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent transition hover:text-accent/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface">
+            <span>Инструкция по интеграции</span>
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M5 10h10M10 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </a>
           <form id="subscribe-form" class="mt-6 space-y-4" novalidate>
             <label for="subscribe-email" class="block text-sm font-semibold uppercase tracking-wide text-muted">E-mail</label>
             <div class="flex flex-col gap-3 sm:flex-row">
