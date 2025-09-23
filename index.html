@@ -194,24 +194,36 @@
           <a href="/dapp/пульс/" class="mt-8 inline-flex items-center justify-center rounded-xl bg-accent px-6 py-3 font-extrabold text-bg transition hover:opacity-90">Открыть интерфейс</a>
         </div>
         <div class="card p-6">
-          <h3 class="text-lg font-semibold">Подписка на e-mail сигналы</h3>
-          <p class="mt-3 text-sm leading-relaxed text-muted">Каждый сигнал дублируется на почту с деталями входа. Endpoint <code class="rounded bg-surface/70 px-2 py-1 text-xs text-muted">POST /api/subscribe-email</code> принимает адрес подписчика.</p>
-          <p class="mt-3 text-sm leading-relaxed text-muted">Чтобы подключить автоматизацию без TradingView API, отправляйте алерты на e-mail и обрабатывайте их в Zapier или другом сервисе интеграций.</p>
-          <a href="/docs#email" class="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-accent transition hover:text-accent/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface">
-            <span>Инструкция по интеграции</span>
-            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-              <path d="M5 10h10M10 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"></path>
-            </svg>
-          </a>
-          <form id="subscribe-form" class="mt-6 space-y-4" novalidate>
-            <label for="subscribe-email" class="block text-sm font-semibold uppercase tracking-wide text-muted">E-mail</label>
-            <div class="flex flex-col gap-3 sm:flex-row">
-              <input id="subscribe-email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" class="w-full rounded-xl border border-grid/50 bg-surface/80 px-4 py-3 text-base text-text placeholder:text-muted/60 transition focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-bg" />
-              <button id="subscribe-button" type="submit" class="inline-flex items-center justify-center rounded-xl bg-accent px-6 py-3 font-extrabold text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60">Подписаться</button>
-            </div>
-            <p id="subscribe-status" class="text-sm text-muted" aria-live="polite"></p>
-          </form>
-          <p class="mt-4 text-xs uppercase tracking-wide text-muted">Можно отписаться в любой момент — подписки следуют лучшим практикам безопасности.</p>
+          <h3 class="text-lg font-semibold">Автоматизация сигналов</h3>
+          <p class="mt-3 text-sm leading-relaxed text-muted">
+            Вместо почтовых рассылок используйте входящий webhook, чтобы передавать сигналы в Zapier, Make или другие сервисы
+            автоматизации. Endpoint принимает JSON и сразу же проксирует событие.
+          </p>
+          <div class="mt-4 flex flex-col gap-3 sm:flex-row">
+            <span
+              id="webhook-url"
+              data-webhook-path="/api/zapier-hook"
+              class="inline-flex items-center justify-between rounded-xl border border-grid/50 bg-surface/80 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted"
+            >
+              /api/zapier-hook
+            </span>
+            <button
+              id="copy-webhook-button"
+              type="button"
+              class="inline-flex items-center justify-center rounded-xl bg-accent px-6 py-3 font-extrabold text-bg transition hover:opacity-90"
+            >
+              Скопировать URL
+            </button>
+          </div>
+          <p class="mt-3 text-xs uppercase tracking-wide text-muted">
+            Webhook не сохраняет персональные данные: он принимает уведомление от индикатора и мгновенно пересылает его в
+            выбранный сценарий автоматизации.
+          </p>
+          <ol class="mt-4 space-y-2 text-sm leading-relaxed text-muted list-decimal list-inside">
+            <li>Создайте Zap и выберите триггер <em>Webhooks by Zapier → Catch Hook</em>.</li>
+            <li>Скопируйте URL, вставьте его в Zapier и отправьте тестовый сигнал для проверки.</li>
+            <li>Добавьте действие: Slack, Sheets, Discord, e-mail или любой другой поддерживаемый сервис.</li>
+          </ol>
         </div>
       </div>
     </section>
@@ -338,7 +350,13 @@
             <ul id="signals-list" class="mt-4 space-y-4"></ul>
           </div>
           <div class="card p-6">
-            <h3 class="text-lg font-semibold flex items-center gap-2">Детали сигнала <span id="email-badge" class="badge bg-accent/10 text-accent hidden">Email отправлен</span></h3>
+            <div class="flex flex-col gap-2">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <h3 class="text-lg font-semibold">Детали сигнала</h3>
+                <span id="automation-status-badge" class="badge hidden">—</span>
+              </div>
+              <p id="automation-status" class="text-xs uppercase tracking-wide text-muted hidden"></p>
+            </div>
             <div id="signal-details" class="mt-4 text-sm leading-relaxed text-muted">Выберите сигнал, чтобы увидеть рыночный контекст и уровни управления риском.</div>
           </div>
         </div>
@@ -466,6 +484,77 @@
       } else if (typeof mediaQuery.addListener === 'function') {
         mediaQuery.addListener(handleMediaChange);
       }
+    }
+
+    const webhookUrlElement = document.getElementById('webhook-url');
+    const copyWebhookButton = document.getElementById('copy-webhook-button');
+
+    if (webhookUrlElement) {
+      const path = webhookUrlElement.dataset.webhookPath || webhookUrlElement.textContent?.trim() || '/api/zapier-hook';
+      let absoluteUrl = path;
+
+      try {
+        absoluteUrl = new URL(path, window.location.origin).href;
+      } catch (error) {
+        console.warn('Не удалось сформировать абсолютный URL webhook', error);
+      }
+
+      webhookUrlElement.textContent = path;
+      webhookUrlElement.setAttribute('data-webhook-url', absoluteUrl);
+      webhookUrlElement.setAttribute('title', absoluteUrl);
+    }
+
+    if (copyWebhookButton && webhookUrlElement) {
+      const defaultText = copyWebhookButton.textContent?.trim() || 'Скопировать URL';
+
+      const resetButtonState = () => {
+        copyWebhookButton.textContent = defaultText;
+        copyWebhookButton.classList.remove('opacity-80');
+        copyWebhookButton.removeAttribute('data-copy-state');
+      };
+
+      copyWebhookButton.addEventListener('click', async () => {
+        if (copyWebhookButton.dataset.copyState === 'pending') {
+          return;
+        }
+
+        const value = webhookUrlElement.dataset.webhookUrl || webhookUrlElement.textContent || '';
+        if (!value) {
+          return;
+        }
+
+        copyWebhookButton.dataset.copyState = 'pending';
+
+        const restoreLater = () => {
+          window.setTimeout(resetButtonState, 2200);
+        };
+
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+          } else {
+            const fallbackInput = document.createElement('input');
+            fallbackInput.value = value;
+            fallbackInput.setAttribute('readonly', '');
+            fallbackInput.style.position = 'fixed';
+            fallbackInput.style.opacity = '0';
+            fallbackInput.style.pointerEvents = 'none';
+            document.body.append(fallbackInput);
+            fallbackInput.select();
+            document.execCommand('copy');
+            fallbackInput.remove();
+          }
+
+          copyWebhookButton.textContent = 'Скопировано';
+          copyWebhookButton.classList.add('opacity-80');
+          restoreLater();
+        } catch (error) {
+          console.error('Не удалось скопировать webhook URL', error);
+          copyWebhookButton.textContent = 'Ошибка копирования';
+          copyWebhookButton.classList.add('opacity-80');
+          restoreLater();
+        }
+      });
     }
   </script>
   <script type="module" src="/dapp/пульс/src/main.js"></script>

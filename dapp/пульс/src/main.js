@@ -24,6 +24,8 @@ const FALLBACK_TICKER_QUOTES = [
   { symbol: 'ADA', price: '$0,48', change: '+1.1%' },
   { symbol: 'DOGE', price: '$0,14', change: '+4.2%' }
 ];
+const AUTOMATION_STATUS_ENDPOINT = '/api/zapier-hook/latest';
+const AUTOMATION_STATUS_REFRESH_INTERVAL = 60_000;
 
 initHeroAnimations();
 
@@ -46,12 +48,9 @@ const coinSummaryRrEl = document.getElementById('coin-summary-rr');
 const coinSummaryTakeProfitEl = document.getElementById('coin-summary-take-profit');
 const coinSummaryStopLossEl = document.getElementById('coin-summary-stop-loss');
 const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-time');
-const emailBadge = document.getElementById('email-badge');
+const automationStatusContainer = document.getElementById('automation-status');
+const automationStatusBadge = document.getElementById('automation-status-badge');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
-const subscribeForm = document.getElementById('subscribe-form');
-const subscribeInput = document.getElementById('subscribe-email');
-const subscribeStatus = document.getElementById('subscribe-status');
-const subscribeButton = document.getElementById('subscribe-button');
 const tickerContent = document.getElementById('ticker-content');
 
 let candleSeries;
@@ -63,9 +62,12 @@ let refreshTimerId = null;
 let isRefreshing = false;
 let tickerTimerId = null;
 let tickerRefreshInProgress = false;
+let automationStatusTimerId = null;
+let automationStatusRefreshInProgress = false;
+let latestAutomationEvent = null;
 
 bindFaqAccordion();
-bindEmailSubscribe();
+initAutomationStatus();
 
 if (chartContainer && signalsList && detailsContainer) {
   initialiseDashboard().catch((error) => {
@@ -139,6 +141,89 @@ function scheduleTickerRefresh() {
   tickerTimerId = setInterval(() => {
     refreshTicker();
   }, TICKER_REFRESH_INTERVAL);
+}
+
+function initAutomationStatus() {
+  if (!automationStatusContainer && !automationStatusBadge) {
+    return;
+  }
+
+  refreshAutomationStatus();
+  scheduleAutomationStatusRefresh();
+}
+
+function scheduleAutomationStatusRefresh() {
+  if (automationStatusTimerId) {
+    clearInterval(automationStatusTimerId);
+  }
+
+  if (!automationStatusContainer && !automationStatusBadge) {
+    automationStatusTimerId = null;
+    return;
+  }
+
+  automationStatusTimerId = setInterval(() => {
+    refreshAutomationStatus();
+  }, AUTOMATION_STATUS_REFRESH_INTERVAL);
+}
+
+async function refreshAutomationStatus() {
+  if (automationStatusRefreshInProgress) {
+    return;
+  }
+
+  if (!automationStatusContainer && !automationStatusBadge) {
+    return;
+  }
+
+  automationStatusRefreshInProgress = true;
+
+  try {
+    const response = await fetch(AUTOMATION_STATUS_ENDPOINT, {
+      headers: { Accept: 'application/json' }
+    });
+
+    if (response.status === 204) {
+      latestAutomationEvent = null;
+      renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Automation status responded with ${response.status}`);
+    }
+
+    const rawPayload = await response.text();
+
+    if (!rawPayload) {
+      latestAutomationEvent = null;
+      renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+      return;
+    }
+
+    let payload = null;
+
+    try {
+      payload = JSON.parse(rawPayload);
+    } catch (parseError) {
+      console.error('Не удалось обработать JSON webhook', parseError);
+      payload = null;
+    }
+
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      latestAutomationEvent = payload;
+      renderAutomationStatus(payload);
+    } else {
+      latestAutomationEvent = null;
+      renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+    }
+  } catch (error) {
+    console.error('Не удалось получить статус автоматизаций', error);
+    latestAutomationEvent = null;
+    renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
+  } finally {
+    automationStatusRefreshInProgress = false;
+  }
 }
 
 async function fetchOhlcData(coinId = DEFAULT_COIN_ID) {
@@ -490,11 +575,25 @@ function renderSignals(data) {
     context.className = 'mt-3 text-sm leading-relaxed text-muted';
     context.textContent = signal.context;
 
-    const emailTag = document.createElement('span');
-    emailTag.className = `badge mt-3 ${signal.emailSent ? 'bg-accent/10 text-accent' : 'bg-accent2/30 text-muted'}`;
-    emailTag.textContent = signal.emailSent ? 'Email отправлен' : 'Email в очереди';
+    const automationState = resolveSignalAutomationState(signal);
+    const automationTag = document.createElement('span');
+    const automationClasses = ['badge', 'mt-3'];
 
-    item.append(header, meta, context, emailTag);
+    if (automationState.tone === 'danger') {
+      automationClasses.push('bg-danger/10', 'text-danger');
+    } else if (automationState.tone === 'success') {
+      automationClasses.push('bg-success/10', 'text-success');
+    } else {
+      automationClasses.push('bg-accent2/30', 'text-muted');
+    }
+
+    automationTag.className = automationClasses.join(' ');
+    if (signalDomId) {
+      automationTag.dataset.signalAutomation = signalDomId;
+    }
+    automationTag.textContent = automationState.badgeText;
+
+    item.append(header, meta, context, automationTag);
     signalsList.append(item);
 
     item.addEventListener('click', () => setActiveSignal(signal, item, data));
@@ -508,9 +607,6 @@ function renderSignals(data) {
 
   if (!signals.length) {
     detailsContainer.innerHTML = '';
-    if (emailBadge) {
-      emailBadge.classList.add('hidden');
-    }
     activeSignalId = null;
     renderCoinSummary(data, null);
     return;
@@ -742,56 +838,334 @@ function toggleAccordion(trigger, panel) {
   }
 }
 
-function bindEmailSubscribe() {
-  if (!subscribeForm || !subscribeInput || !subscribeButton || !subscribeStatus) return;
+function renderAutomationStatus(event, options = {}) {
+  if (!automationStatusContainer && !automationStatusBadge) {
+    return;
+  }
 
-  const defaultButtonText = subscribeButton.textContent;
+  const { message = null, isError = false } = options;
+  let resolvedText = message;
+  let tone = null;
 
-  subscribeForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
+  if (event) {
+    tone = resolveAutomationEventTone(event);
+    const summary = getAutomationEventSummary(event);
+    const statusLabel = getAutomationEventStatus(event);
+    const destination = getAutomationEventDestination(event);
+    const signalId = extractAutomationSignalId(event);
+    const timestamp = getAutomationEventTimestamp(event);
 
-    const email = subscribeInput.value.trim();
-
-    subscribeStatus.textContent = '';
-    subscribeStatus.classList.remove('text-danger', 'text-success');
-    subscribeStatus.classList.add('text-muted');
-
-    subscribeInput.classList.remove('ring-2', 'ring-danger', 'ring-success', 'ring-offset-2', 'ring-offset-bg');
-
-    if (!isValidEmail(email)) {
-      subscribeStatus.textContent = 'Проверьте адрес электронной почты.';
-      subscribeStatus.classList.remove('text-muted');
-      subscribeStatus.classList.add('text-danger');
-      subscribeInput.classList.add('ring-2', 'ring-danger', 'ring-offset-2', 'ring-offset-bg');
-      subscribeInput.focus();
-      return;
+    const parts = [];
+    if (summary) {
+      parts.push(summary);
+    }
+    if (statusLabel && (!summary || summary.toLowerCase() !== statusLabel.toLowerCase())) {
+      parts.push(statusLabel);
+    }
+    if (destination) {
+      parts.push(destination);
+    }
+    if (signalId) {
+      parts.push(`Сигнал ${signalId}`);
+    }
+    if (timestamp) {
+      parts.push(formatRelative(timestamp));
     }
 
-    subscribeButton.disabled = true;
-    subscribeButton.textContent = 'Отправляем…';
+    resolvedText = parts.length
+      ? `Последнее событие автоматизации: ${parts.join(' • ')}`
+      : 'Получено событие автоматизации.';
 
-    try {
-      const response = await mockSubscribe(email);
-      if (!response.ok) {
-        throw new Error('Mock request failed');
+    if (signalsList && dashboardData?.signals && signalId) {
+      const normalizedId = String(signalId);
+      const safeId =
+        typeof CSS?.escape === 'function'
+          ? CSS.escape(normalizedId)
+          : normalizedId.replace(/["\\]/g, '\\$&');
+      const tag = signalsList.querySelector(`[data-signal-automation="${safeId}"]`);
+      if (tag) {
+        const relatedSignal = dashboardData.signals.find(
+          (candidate) => getSignalDomId(candidate) === normalizedId
+        );
+        if (relatedSignal) {
+          const state = resolveSignalAutomationState(relatedSignal);
+          tag.textContent = state.badgeText;
+          tag.classList.remove('bg-danger/10', 'text-danger', 'bg-success/10', 'text-success', 'bg-accent2/30', 'text-muted');
+          if (state.tone === 'danger') {
+            tag.classList.add('bg-danger/10', 'text-danger');
+          } else if (state.tone === 'success') {
+            tag.classList.add('bg-success/10', 'text-success');
+          } else {
+            tag.classList.add('bg-accent2/30', 'text-muted');
+          }
+        }
       }
-
-      subscribeStatus.textContent = 'Готово! Мы пришлём актуальные сигналы на почту.';
-      subscribeStatus.classList.remove('text-muted');
-      subscribeStatus.classList.add('text-success');
-      subscribeInput.classList.add('ring-2', 'ring-success', 'ring-offset-2', 'ring-offset-bg');
-      subscribeForm.reset();
-    } catch (error) {
-      console.error(error);
-      subscribeStatus.textContent = 'Не удалось отправить подписку. Попробуйте снова.';
-      subscribeStatus.classList.remove('text-muted');
-      subscribeStatus.classList.add('text-danger');
-      subscribeInput.classList.add('ring-2', 'ring-danger', 'ring-offset-2', 'ring-offset-bg');
-    } finally {
-      subscribeButton.disabled = false;
-      subscribeButton.textContent = defaultButtonText;
     }
-  });
+  } else if (!message) {
+    resolvedText = 'Webhook ещё не получил событий.';
+  }
+
+  if (automationStatusContainer) {
+    automationStatusContainer.textContent = resolvedText || '';
+    automationStatusContainer.classList.toggle('hidden', !resolvedText);
+    automationStatusContainer.classList.remove('text-danger', 'text-success', 'text-muted');
+
+    if (isError) {
+      automationStatusContainer.classList.add('text-danger');
+    } else if (tone === 'success') {
+      automationStatusContainer.classList.add('text-success');
+    } else {
+      automationStatusContainer.classList.add('text-muted');
+    }
+  }
+
+  if (automationStatusBadge) {
+    automationStatusBadge.className = 'badge';
+    automationStatusBadge.classList.add('hidden');
+
+    if (isError) {
+      automationStatusBadge.textContent = 'Webhook недоступен';
+      automationStatusBadge.classList.remove('hidden');
+      automationStatusBadge.classList.add('bg-danger/10', 'text-danger');
+    } else if (event) {
+      const statusLabel = getAutomationEventStatus(event) || 'Webhook активен';
+      automationStatusBadge.textContent = statusLabel;
+      automationStatusBadge.classList.remove('hidden');
+
+      if (tone === 'danger') {
+        automationStatusBadge.classList.add('bg-danger/10', 'text-danger');
+      } else if (tone === 'success') {
+        automationStatusBadge.classList.add('bg-success/10', 'text-success');
+      } else {
+        automationStatusBadge.classList.add('bg-accent/10', 'text-accent');
+      }
+    } else if (message) {
+      automationStatusBadge.textContent = message;
+      automationStatusBadge.classList.remove('hidden');
+      automationStatusBadge.classList.add('bg-surface/70', 'text-muted');
+    }
+  }
+
+  refreshActiveSignalAutomationSummary();
+}
+
+function refreshActiveSignalAutomationSummary() {
+  if (!detailsContainer || !dashboardData || !activeSignalId) {
+    return;
+  }
+
+  const signals = Array.isArray(dashboardData.signals) ? dashboardData.signals : [];
+  const activeSignal = signals.find((candidate) => getSignalDomId(candidate) === activeSignalId);
+  if (!activeSignal) {
+    return;
+  }
+
+  const state = resolveSignalAutomationState(activeSignal);
+  const summaryElement = detailsContainer.querySelector('[data-signal-automation-summary]');
+  if (!summaryElement) {
+    return;
+  }
+
+  summaryElement.textContent = state.detailsText;
+  summaryElement.classList.remove('text-success', 'text-danger', 'text-muted');
+
+  if (state.tone === 'danger') {
+    summaryElement.classList.add('text-danger');
+  } else if (state.tone === 'success') {
+    summaryElement.classList.add('text-success');
+  } else {
+    summaryElement.classList.add('text-muted');
+  }
+}
+
+function resolveSignalAutomationState(signal) {
+  const forwarded = Boolean(signal?.automationForwarded);
+  const fallbackBadgeText = forwarded ? 'Автоматизация отправлена' : 'Ожидает автоматизацию';
+  const fallbackDetailsText = forwarded ? 'Передано в Zapier' : 'Ожидает webhook';
+  const fallbackTone = forwarded ? 'success' : 'pending';
+
+  if (!latestAutomationEvent || !signal) {
+    return {
+      badgeText: fallbackBadgeText,
+      detailsText: fallbackDetailsText,
+      tone: fallbackTone
+    };
+  }
+
+  const eventSignalId = extractAutomationSignalId(latestAutomationEvent);
+  const signalDomId = getSignalDomId(signal);
+
+  if (!eventSignalId || !signalDomId || String(eventSignalId) !== signalDomId) {
+    return {
+      badgeText: fallbackBadgeText,
+      detailsText: fallbackDetailsText,
+      tone: fallbackTone
+    };
+  }
+
+  const tone = resolveAutomationEventTone(latestAutomationEvent) || fallbackTone;
+  const statusLabel = getAutomationEventStatus(latestAutomationEvent);
+  const summary = getAutomationEventSummary(latestAutomationEvent);
+  const destination = getAutomationEventDestination(latestAutomationEvent);
+  const timestamp = getAutomationEventTimestamp(latestAutomationEvent);
+
+  const detailsParts = [];
+  if (summary) {
+    detailsParts.push(summary);
+  }
+  if (statusLabel && (!summary || summary.toLowerCase() !== statusLabel.toLowerCase())) {
+    detailsParts.push(statusLabel);
+  }
+  if (destination) {
+    detailsParts.push(destination);
+  }
+  if (timestamp) {
+    detailsParts.push(formatRelative(timestamp));
+  }
+
+  let badgeText = fallbackBadgeText;
+  if (tone === 'danger') {
+    badgeText = statusLabel || 'Ошибка автоматизации';
+  } else if (tone === 'pending') {
+    badgeText = statusLabel || 'Автоматизация в очереди';
+  } else if (tone === 'success') {
+    badgeText = statusLabel || 'Автоматизация доставлена';
+  }
+
+  return {
+    badgeText,
+    detailsText: detailsParts.length ? detailsParts.join(' • ') : fallbackDetailsText,
+    tone
+  };
+}
+
+function extractAutomationSignalId(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    event.signalId,
+    event.signal_id,
+    event.signalID,
+    event.signal?.id,
+    event.signal?.signalId,
+    event.payload?.signalId,
+    event.data?.signalId
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate != null) {
+      return String(candidate);
+    }
+  }
+
+  return null;
+}
+
+function getAutomationEventTimestamp(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    event.receivedAt,
+    event.deliveredAt,
+    event.sentAt,
+    event.triggeredAt,
+    event.createdAt,
+    event.timestamp,
+    event.time
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const date = new Date(candidate);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString();
+    }
+  }
+
+  return null;
+}
+
+function getAutomationEventSummary(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const candidates = [event.summary, event.message, event.description, event.event, event.title];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function getAutomationEventStatus(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  if (typeof event.success === 'boolean') {
+    return event.success ? 'success' : 'failed';
+  }
+
+  const candidates = [event.status, event.state, event.result, event.outcome];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function getAutomationEventDestination(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const candidates = [event.destination, event.target, event.integration, event.channel, event.to];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function resolveAutomationEventTone(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  if (event.error || event.errorMessage || event.success === false) {
+    return 'danger';
+  }
+
+  if (event.success === true) {
+    return 'success';
+  }
+
+  const status = getAutomationEventStatus(event);
+  if (status) {
+    const normalized = status.toLowerCase();
+    if (normalized.includes('fail') || normalized.includes('error') || normalized.includes('cancel') || normalized.includes('stop') || normalized.includes('timeout')) {
+      return 'danger';
+    }
+    if (normalized.includes('pending') || normalized.includes('wait') || normalized.includes('queue') || normalized.includes('processing')) {
+      return 'pending';
+    }
+    if (normalized.includes('success') || normalized.includes('delivered') || normalized.includes('sent') || normalized.includes('forwarded') || normalized.includes('ok')) {
+      return 'success';
+    }
+  }
+
+  return null;
 }
 
 function setActiveSignal(signal, element, data = dashboardData) {
@@ -805,15 +1179,6 @@ function setActiveSignal(signal, element, data = dashboardData) {
   const signalDomId = getSignalDomId(signal);
   activeSignalId = signalDomId;
 
-  if (emailBadge) {
-    if (signal.emailSent) {
-      emailBadge.classList.remove('hidden');
-      emailBadge.textContent = 'Email отправлен';
-    } else {
-      emailBadge.classList.add('hidden');
-    }
-  }
-
   if (detailsContainer) {
     const confidence = Math.round(signal.confidence * 100);
     const entryPriceInfo = formatPrice(signal.price, data);
@@ -825,6 +1190,13 @@ function setActiveSignal(signal, element, data = dashboardData) {
       'ml-2 text-[10px] uppercase tracking-wide text-muted'
     );
     const stopLossMarkup = formatPriceMarkup(stopLossInfo, 'ml-2 text-[10px] uppercase tracking-wide text-muted');
+    const automationState = resolveSignalAutomationState(signal);
+    const automationToneClass =
+      automationState.tone === 'danger'
+        ? 'text-danger'
+        : automationState.tone === 'success'
+        ? 'text-success'
+        : 'text-muted';
     detailsContainer.innerHTML = `
       <div class="space-y-4">
         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-muted">
@@ -852,9 +1224,18 @@ function setActiveSignal(signal, element, data = dashboardData) {
             <div class="text-[11px]">Stop-loss</div>
             <div class="mt-1 text-sm font-semibold text-danger">${stopLossMarkup}</div>
           </div>
+          <div class="rounded-xl bg-surface/80 p-3">
+            <div class="text-[11px]">Автоматизация</div>
+            <div class="mt-1 text-sm font-semibold ${automationToneClass}" data-signal-automation-summary data-signal-id="${signalDomId ?? ''}"></div>
+          </div>
         </div>
       </div>
     `;
+
+    const automationSummaryEl = detailsContainer.querySelector('[data-signal-automation-summary]');
+    if (automationSummaryEl) {
+      automationSummaryEl.textContent = automationState.detailsText;
+    }
   }
 
   if (chart && candleSeries) {
@@ -1005,18 +1386,6 @@ function formatRelative(isoString) {
   if (hours < 24) return `${hours} ч назад`;
   const days = Math.round(hours / 24);
   return `${days} дн назад`;
-}
-
-function isValidEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function mockSubscribe() {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({ ok: true });
-    }, 700);
-  });
 }
 
 function initHeroAnimations() {
