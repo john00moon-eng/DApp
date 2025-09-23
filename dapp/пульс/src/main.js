@@ -4,6 +4,26 @@ import mockPayload from './data/mockSignals.json';
 
 const DEFAULT_COIN_ID = 'bitcoin';
 const REFRESH_INTERVAL = 60_000;
+const TICKER_REFRESH_INTERVAL = 60_000;
+const TICKER_STATUS_UNAVAILABLE = 'Данные недоступны';
+const TICKER_ASSETS = [
+  { id: 'bitcoin', symbol: 'BTC' },
+  { id: 'ethereum', symbol: 'ETH' },
+  { id: 'solana', symbol: 'SOL' },
+  { id: 'binancecoin', symbol: 'BNB' },
+  { id: 'ripple', symbol: 'XRP' },
+  { id: 'cardano', symbol: 'ADA' },
+  { id: 'dogecoin', symbol: 'DOGE' }
+];
+const FALLBACK_TICKER_QUOTES = [
+  { symbol: 'BTC', price: '$68 500', change: '+1.8%' },
+  { symbol: 'ETH', price: '$3 750', change: '+2.1%' },
+  { symbol: 'SOL', price: '$162', change: '-0.5%' },
+  { symbol: 'BNB', price: '$575', change: '+0.8%' },
+  { symbol: 'XRP', price: '$0,52', change: '+0.3%' },
+  { symbol: 'ADA', price: '$0,48', change: '+1.1%' },
+  { symbol: 'DOGE', price: '$0,14', change: '+4.2%' }
+];
 
 const chartContainer = document.getElementById('chart-root');
 const signalsList = document.getElementById('signals-list');
@@ -17,6 +37,7 @@ const subscribeForm = document.getElementById('subscribe-form');
 const subscribeInput = document.getElementById('subscribe-email');
 const subscribeStatus = document.getElementById('subscribe-status');
 const subscribeButton = document.getElementById('subscribe-button');
+const tickerContent = document.getElementById('ticker-content');
 
 let candleSeries;
 let chart;
@@ -24,6 +45,8 @@ let activeSignalElement = null;
 let dashboardData = null;
 let refreshTimerId = null;
 let isRefreshing = false;
+let tickerTimerId = null;
+let tickerRefreshInProgress = false;
 
 bindFaqAccordion();
 bindEmailSubscribe();
@@ -37,6 +60,9 @@ if (chartContainer && signalsList && detailsContainer) {
     renderMetrics(dashboardData);
     renderChart(dashboardData);
     renderSignals(dashboardData);
+    if (tickerContent) {
+      renderTicker(FALLBACK_TICKER_QUOTES, { message: TICKER_STATUS_UNAVAILABLE });
+    }
   });
 } else {
   console.warn('UI containers are missing. Check index.html layout.');
@@ -44,7 +70,9 @@ if (chartContainer && signalsList && detailsContainer) {
 
 async function initialiseDashboard() {
   await refreshDashboard();
+  await refreshTicker();
   scheduleAutoRefresh();
+  scheduleTickerRefresh();
 }
 
 async function refreshDashboard() {
@@ -78,6 +106,21 @@ function scheduleAutoRefresh() {
   refreshTimerId = setInterval(() => {
     refreshDashboard();
   }, REFRESH_INTERVAL);
+}
+
+function scheduleTickerRefresh() {
+  if (tickerTimerId) {
+    clearInterval(tickerTimerId);
+  }
+
+  if (!tickerContent) {
+    tickerTimerId = null;
+    return;
+  }
+
+  tickerTimerId = setInterval(() => {
+    refreshTicker();
+  }, TICKER_REFRESH_INTERVAL);
 }
 
 async function fetchOhlcData(coinId = DEFAULT_COIN_ID) {
@@ -129,6 +172,181 @@ async function fetchOhlcData(coinId = DEFAULT_COIN_ID) {
   basePayload.coinId = coinId;
 
   return basePayload;
+}
+
+async function fetchTickerQuotes() {
+  const ids = TICKER_ASSETS.map((asset) => asset.id).join(',');
+  const endpoint =
+    `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+
+  const response = await fetch(endpoint);
+
+  if (!response.ok) {
+    throw new Error(`CoinGecko ticker responded with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('CoinGecko ticker payload is malformed.');
+  }
+
+  return TICKER_ASSETS.map((asset) => {
+    const entry = payload[asset.id];
+    if (!entry || typeof entry.usd !== 'number') {
+      return null;
+    }
+
+    const price = formatTickerPrice(entry.usd);
+    const changeValue = Number(entry.usd_24h_change);
+
+    let change = '—';
+    if (Number.isFinite(changeValue)) {
+      const roundedChange = Math.round(changeValue * 10) / 10;
+      const sign = roundedChange >= 0 ? '+' : '';
+      change = `${sign}${roundedChange.toFixed(1)}%`;
+    }
+
+    return {
+      symbol: asset.symbol,
+      price,
+      change
+    };
+  }).filter(Boolean);
+}
+
+async function refreshTicker() {
+  if (!tickerContent) {
+    if (tickerTimerId) {
+      clearInterval(tickerTimerId);
+      tickerTimerId = null;
+    }
+    return;
+  }
+
+  if (tickerRefreshInProgress) {
+    return;
+  }
+
+  tickerRefreshInProgress = true;
+
+  try {
+    const quotes = await fetchTickerQuotes();
+    if (!quotes.length) {
+      renderTicker(FALLBACK_TICKER_QUOTES, { message: TICKER_STATUS_UNAVAILABLE });
+      return;
+    }
+
+    renderTicker(quotes);
+  } catch (error) {
+    console.error('Не удалось обновить тикер котировок', error);
+    renderTicker(FALLBACK_TICKER_QUOTES, { message: TICKER_STATUS_UNAVAILABLE });
+  } finally {
+    tickerRefreshInProgress = false;
+  }
+}
+
+function renderTicker(quotes, options = {}) {
+  if (!tickerContent) {
+    return;
+  }
+
+  const { message = null } = options;
+
+  tickerContent.innerHTML = '';
+  tickerContent.classList.toggle('has-message', Boolean(message));
+
+  if (message) {
+    const messageEl = document.createElement('span');
+    messageEl.className = 'ticker-message';
+    messageEl.textContent = message;
+    tickerContent.append(messageEl);
+  }
+
+  if (!Array.isArray(quotes) || !quotes.length) {
+    tickerContent.classList.add('is-empty');
+
+    if (!message) {
+      const emptyMessage = document.createElement('span');
+      emptyMessage.className = 'ticker-message';
+      emptyMessage.textContent = TICKER_STATUS_UNAVAILABLE;
+      tickerContent.append(emptyMessage);
+    }
+
+    return;
+  }
+
+  tickerContent.classList.remove('is-empty');
+
+  const fragment = document.createDocumentFragment();
+  const items = [...quotes, ...quotes];
+
+  items.forEach((quote) => {
+    const item = document.createElement('span');
+    item.className = 'ticker-item';
+
+    const symbolEl = document.createElement('span');
+    symbolEl.className = 'ticker-symbol';
+    symbolEl.textContent = quote.symbol;
+
+    const priceEl = document.createElement('span');
+    priceEl.className = 'ticker-price';
+    const priceValue =
+      typeof quote.price === 'number'
+        ? formatTickerPrice(quote.price)
+        : String(quote.price ?? '—');
+    priceEl.textContent = priceValue;
+
+    const changeEl = document.createElement('span');
+    changeEl.className = 'ticker-change';
+
+    let changeText = '—';
+    if (typeof quote.change === 'number') {
+      changeText = `${quote.change >= 0 ? '+' : ''}${quote.change.toFixed(1)}%`;
+    } else if (typeof quote.change === 'string') {
+      changeText = quote.change.trim();
+    }
+
+    if (changeText.startsWith('-')) {
+      changeEl.classList.add('ticker-change--negative');
+    } else if (changeText.startsWith('+')) {
+      changeEl.classList.add('ticker-change--positive');
+    }
+
+    changeEl.textContent = changeText || '—';
+
+    item.append(symbolEl, priceEl, changeEl);
+    fragment.append(item);
+  });
+
+  tickerContent.append(fragment);
+}
+
+function formatTickerPrice(value) {
+  if (!Number.isFinite(value)) {
+    return '—';
+  }
+
+  let minimumFractionDigits = 0;
+  let maximumFractionDigits = 0;
+
+  if (value < 1) {
+    minimumFractionDigits = 2;
+    maximumFractionDigits = 4;
+  } else if (value < 10) {
+    maximumFractionDigits = 2;
+  } else if (value < 100) {
+    maximumFractionDigits = 1;
+  }
+
+  const formatter = new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits,
+    maximumFractionDigits
+  });
+
+  const formatted = formatter.format(value).replace(/\u00A0/g, '\u202F');
+
+  return `$${formatted}`;
 }
 
 function renderChart(data) {
