@@ -64,7 +64,7 @@
       "riskReward": 2.4,
       "emaTrend": "bullish crossover",
       "volumeDelta": "+7.2%",
-      "emailSent": true,
+      "automationForwarded": true,
       "takeProfit": 63850,
       "stopLoss": 62340,
       "context": "RSI восстановился из зоны перепроданности, объёмы на Binance выросли выше среднего за 30 дней."
@@ -78,7 +78,7 @@
       "riskReward": 1.9,
       "emaTrend": "bearish divergence",
       "volumeDelta": "-5.1%",
-      "emailSent": false,
+      "automationForwarded": false,
       "takeProfit": 62720,
       "stopLoss": 63990,
       "context": "Цена встретила сопротивление на дневном облаке Ichimoku, фиксируем прибыль по длинным позициям."
@@ -92,7 +92,7 @@
       "riskReward": 2.8,
       "emaTrend": "strong uptrend",
       "volumeDelta": "+9.4%",
-      "emailSent": true,
+      "automationForwarded": true,
       "takeProfit": 66220,
       "stopLoss": 64760,
       "context": "Пробой локального диапазона с подтверждением по OBV и ускорением фандинга."
@@ -106,7 +106,7 @@
       "riskReward": 2.1,
       "emaTrend": "momentum slowdown",
       "volumeDelta": "-3.2%",
-      "emailSent": true,
+      "automationForwarded": true,
       "takeProfit": 64100,
       "stopLoss": 65270,
       "context": "Появилась медвежья дивергенция по MACD, фиксируем шорт от локального хая."
