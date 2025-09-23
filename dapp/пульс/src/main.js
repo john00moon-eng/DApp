@@ -50,8 +50,11 @@ const coinSummaryStopLossEl = document.getElementById('coin-summary-stop-loss');
 const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-time');
 const automationStatusContainer = document.getElementById('automation-status');
 const automationStatusBadge = document.getElementById('automation-status-badge');
+const automationPortIndicator = document.getElementById('automation-port-indicator');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const tickerContent = document.getElementById('ticker-content');
+
+const automationWebhookPort = resolveAutomationWebhookPort();
 
 let candleSeries;
 let chart;
@@ -144,10 +147,11 @@ function scheduleTickerRefresh() {
 }
 
 function initAutomationStatus() {
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     return;
   }
 
+  renderAutomationPortStatus(automationWebhookPort, { status: 'проверка…', isPending: true });
   refreshAutomationStatus();
   scheduleAutomationStatusRefresh();
 }
@@ -157,7 +161,7 @@ function scheduleAutomationStatusRefresh() {
     clearInterval(automationStatusTimerId);
   }
 
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     automationStatusTimerId = null;
     return;
   }
@@ -172,7 +176,7 @@ async function refreshAutomationStatus() {
     return;
   }
 
-  if (!automationStatusContainer && !automationStatusBadge) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
     return;
   }
 
@@ -182,9 +186,11 @@ async function refreshAutomationStatus() {
     const response = await fetch(AUTOMATION_STATUS_ENDPOINT, {
       headers: { Accept: 'application/json' }
     });
+    const responsePort = extractPortFromResponse(response) ?? automationWebhookPort;
 
     if (response.status === 204) {
       latestAutomationEvent = null;
+      renderAutomationPortStatus(responsePort, { status: 'OK' });
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       return;
     }
@@ -193,6 +199,7 @@ async function refreshAutomationStatus() {
       throw new Error(`Automation status responded with ${response.status}`);
     }
 
+    renderAutomationPortStatus(responsePort, { status: 'OK' });
     const rawPayload = await response.text();
 
     if (!rawPayload) {
@@ -221,6 +228,7 @@ async function refreshAutomationStatus() {
     console.error('Не удалось получить статус автоматизаций', error);
     latestAutomationEvent = null;
     renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
+    renderAutomationPortStatus(automationWebhookPort, { status: 'недоступен', isError: true });
   } finally {
     automationStatusRefreshInProgress = false;
   }
@@ -838,6 +846,48 @@ function toggleAccordion(trigger, panel) {
   }
 }
 
+function renderAutomationPortStatus(port, options = {}) {
+  if (!automationPortIndicator) {
+    return;
+  }
+
+  const { status = null, isError = false, isPending = false } = options;
+  const rawPort =
+    typeof port === 'number'
+      ? String(port)
+      : typeof port === 'string'
+        ? port.trim()
+        : '';
+  const resolvedPort = rawPort || '—';
+
+  let resolvedStatus = status;
+  if (!resolvedStatus) {
+    if (isError) {
+      resolvedStatus = 'недоступен';
+    } else if (isPending) {
+      resolvedStatus = 'проверка…';
+    } else {
+      resolvedStatus = 'OK';
+    }
+  }
+
+  automationPortIndicator.textContent = `Порт ${resolvedPort}: ${resolvedStatus}`;
+  automationPortIndicator.classList.remove('hidden');
+  automationPortIndicator.classList.remove(
+    'port-indicator--ok',
+    'port-indicator--error',
+    'port-indicator--pending'
+  );
+
+  if (isError) {
+    automationPortIndicator.classList.add('port-indicator--error');
+  } else if (isPending) {
+    automationPortIndicator.classList.add('port-indicator--pending');
+  } else {
+    automationPortIndicator.classList.add('port-indicator--ok');
+  }
+}
+
 function renderAutomationStatus(event, options = {}) {
   if (!automationStatusContainer && !automationStatusBadge) {
     return;
@@ -947,6 +997,40 @@ function renderAutomationStatus(event, options = {}) {
   }
 
   refreshActiveSignalAutomationSummary();
+}
+
+function extractPortFromResponse(response) {
+  if (!response || typeof response.url !== 'string' || !response.url) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(response.url);
+    if (parsedUrl.port) {
+      return parsedUrl.port;
+    }
+  } catch (error) {
+    return null;
+  }
+
+  return null;
+}
+
+function resolveAutomationWebhookPort() {
+  const envPort = import.meta.env?.VITE_WEBHOOK_PORT;
+  if (typeof envPort === 'string' && envPort.trim()) {
+    return envPort.trim();
+  }
+
+  const locationPort =
+    typeof window !== 'undefined' && typeof window.location?.port === 'string'
+      ? window.location.port
+      : '';
+  if (locationPort && locationPort.trim()) {
+    return locationPort.trim();
+  }
+
+  return '3001';
 }
 
 function refreshActiveSignalAutomationSummary() {
