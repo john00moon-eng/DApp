@@ -1,6 +1,6 @@
 import './style.css';
 import { createChart, CrosshairMode } from 'lightweight-charts';
-import payload from './data/mockSignals.json';
+import mockPayload from './data/mockSignals.json';
 
 const chartContainer = document.getElementById('chart-root');
 const signalsList = document.getElementById('signals-list');
@@ -15,27 +15,89 @@ const subscribeInput = document.getElementById('subscribe-email');
 const subscribeStatus = document.getElementById('subscribe-status');
 const subscribeButton = document.getElementById('subscribe-button');
 
+const MARKET_CONFIG = {
+  coinId: 'bitcoin',
+  vsCurrency: 'usd',
+  timeframe: '1h',
+  days: 1,
+  autoUpdateMs: 60_000
+};
+
+const payload = JSON.parse(JSON.stringify(mockPayload));
+payload.quoteAsset = (MARKET_CONFIG.vsCurrency || payload.quoteAsset || 'usd').toUpperCase();
+payload.timeframe = MARKET_CONFIG.timeframe || payload.timeframe;
+payload.symbol = composeSymbol(payload.quoteAsset);
+payload.lastUpdated = new Date().toISOString();
+
 let candleSeries;
 let chart;
 let activeSignalElement = null;
+let latestCandles = [];
+let autoUpdateTimerId = null;
+let isAutoUpdating = false;
 
 bindFaqAccordion();
 bindEmailSubscribe();
 
 if (chartContainer && signalsList && detailsContainer) {
-  initialiseDashboard();
+  initialiseDashboard().catch((error) => {
+    console.error('Dashboard initialisation failed', error);
+  });
 } else {
   console.warn('UI containers are missing. Check index.html layout.');
 }
 
-function initialiseDashboard() {
-  hydrateHeader();
-  renderMetrics();
-  renderChart();
-  renderSignals();
+async function initialiseDashboard() {
+  try {
+    const marketData = await fetchOhlcData();
+
+    payload.symbol = marketData.symbol;
+    payload.timeframe = marketData.timeframe;
+    payload.lastUpdated = marketData.lastUpdated.toISOString();
+    payload.quoteAsset = marketData.vsCurrency.toUpperCase();
+
+    hydrateHeader();
+    renderMetrics();
+    renderChart(marketData.candles);
+    renderSignals();
+    startAutoUpdate();
+  } catch (error) {
+    console.error('Failed to initialise dashboard with live data', error);
+
+    payload.quoteAsset = (MARKET_CONFIG.vsCurrency || payload.quoteAsset || 'usd').toUpperCase();
+    payload.symbol = composeSymbol(payload.quoteAsset);
+    payload.timeframe = MARKET_CONFIG.timeframe || payload.timeframe;
+    payload.lastUpdated = new Date().toISOString();
+
+    hydrateHeader({
+      message: 'Не удалось загрузить данные CoinGecko — показаны демонстрационные цены.'
+    });
+    renderMetrics();
+
+    const fallbackCandles = Array.isArray(mockPayload.candles)
+      ? mockPayload.candles.map((point) => ({
+          time: isoToUnix(point.time),
+          open: Number(point.open),
+          high: Number(point.high),
+          low: Number(point.low),
+          close: Number(point.close)
+        }))
+      : [];
+
+    renderChart(fallbackCandles);
+    renderSignals();
+  }
 }
 
-function renderChart() {
+function renderChart(candles = []) {
+  clearAutoUpdateTimer();
+
+  if (chart) {
+    chart.remove();
+  }
+
+  chartContainer.innerHTML = '';
+
   const width = chartContainer.clientWidth || 720;
   const height = chartContainer.clientHeight || 360;
 
@@ -76,34 +138,180 @@ function renderChart() {
     wickDownColor: '#DC5A78'
   });
 
-  const candleData = payload.candles.map((point) => ({
-    time: isoToUnix(point.time),
-    open: point.open,
-    high: point.high,
-    low: point.low,
-    close: point.close
-  }));
+  const candleData = Array.isArray(candles)
+    ? candles
+        .map((point) => ({
+          time: Number(point.time),
+          open: Number(point.open),
+          high: Number(point.high),
+          low: Number(point.low),
+          close: Number(point.close)
+        }))
+        .filter((point) =>
+          Number.isFinite(point.time) &&
+          Number.isFinite(point.open) &&
+          Number.isFinite(point.high) &&
+          Number.isFinite(point.low) &&
+          Number.isFinite(point.close)
+        )
+    : [];
 
   candleSeries.setData(candleData);
-  candleSeries.setMarkers(payload.signals.map((signal) => ({
-    time: isoToUnix(signal.timestamp),
-    position: signal.type === 'BUY' ? 'belowBar' : 'aboveBar',
-    color: signal.type === 'BUY' ? '#46C078' : '#DC5A78',
-    shape: signal.type === 'BUY' ? 'arrowUp' : 'arrowDown',
-    text: `${signal.type} ${formatPrice(signal.price)}`
-  })));
+  latestCandles = candleData;
+  payload.candles = candleData;
 
-  chart.timeScale().fitContent();
+  if (Array.isArray(payload.signals) && payload.signals.length > 0) {
+    candleSeries.setMarkers(
+      payload.signals.map((signal) => ({
+        time: isoToUnix(signal.timestamp),
+        position: signal.type === 'BUY' ? 'belowBar' : 'aboveBar',
+        color: signal.type === 'BUY' ? '#46C078' : '#DC5A78',
+        shape: signal.type === 'BUY' ? 'arrowUp' : 'arrowDown',
+        text: `${signal.type} ${formatPrice(signal.price)}`
+      }))
+    );
+  }
+
+  if (candleData.length > 0) {
+    chart.timeScale().fitContent();
+  }
 
   window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight || height);
   });
 }
 
+async function fetchOhlcData({
+  coinId = MARKET_CONFIG.coinId,
+  vsCurrency = MARKET_CONFIG.vsCurrency,
+  days = MARKET_CONFIG.days
+} = {}) {
+  const resolvedCoinId = coinId || MARKET_CONFIG.coinId;
+  const resolvedCurrency = (vsCurrency || MARKET_CONFIG.vsCurrency || 'usd').toLowerCase();
+  const resolvedDays = days ?? MARKET_CONFIG.days ?? 1;
+
+  if (!resolvedCoinId) {
+    throw new Error('Coin identifier is required to request OHLC data.');
+  }
+
+  const query = new URLSearchParams({
+    vs_currency: resolvedCurrency,
+    days: String(resolvedDays)
+  });
+
+  const endpoint = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(
+    resolvedCoinId
+  )}/ohlc?${query.toString()}`;
+
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(`CoinGecko responded with status ${response.status}`);
+  }
+
+  const rawData = await response.json();
+  if (!Array.isArray(rawData)) {
+    throw new Error('Unexpected OHLC response format from CoinGecko.');
+  }
+
+  const candles = rawData
+    .map((entry) => {
+      if (!Array.isArray(entry) || entry.length < 5) {
+        return null;
+      }
+
+      const [timestamp, open, high, low, close] = entry;
+      const normalised = {
+        time: Math.floor(Number(timestamp) / 1000),
+        open: Number(open),
+        high: Number(high),
+        low: Number(low),
+        close: Number(close)
+      };
+
+      if (
+        !Number.isFinite(normalised.time) ||
+        !Number.isFinite(normalised.open) ||
+        !Number.isFinite(normalised.high) ||
+        !Number.isFinite(normalised.low) ||
+        !Number.isFinite(normalised.close)
+      ) {
+        return null;
+      }
+
+      return normalised;
+    })
+    .filter((entry) => entry !== null)
+    .sort((a, b) => a.time - b.time);
+
+  return {
+    candles,
+    symbol: composeSymbol(resolvedCurrency),
+    timeframe: MARKET_CONFIG.timeframe || payload.timeframe,
+    lastUpdated: new Date(),
+    vsCurrency: resolvedCurrency
+  };
+}
+
+function startAutoUpdate() {
+  if (!MARKET_CONFIG.autoUpdateMs || !candleSeries) {
+    return;
+  }
+
+  clearAutoUpdateTimer();
+
+  autoUpdateTimerId = setInterval(async () => {
+    if (isAutoUpdating) return;
+    isAutoUpdating = true;
+
+    try {
+      const marketData = await fetchOhlcData();
+      if (!Array.isArray(marketData.candles) || marketData.candles.length === 0) {
+        return;
+      }
+
+      const previousLength = latestCandles.length;
+      const newCandles = marketData.candles;
+      const lastIncoming = newCandles[newCandles.length - 1];
+      const lastKnown = previousLength > 0 ? latestCandles[previousLength - 1] : undefined;
+
+      if (!lastKnown || newCandles.length < previousLength) {
+        candleSeries.setData(newCandles);
+      } else if (newCandles.length > previousLength) {
+        newCandles.slice(previousLength).forEach((bar) => candleSeries.update(bar));
+      } else if (lastIncoming) {
+        candleSeries.update(lastIncoming);
+      }
+
+      latestCandles = newCandles;
+      payload.candles = newCandles;
+      payload.lastUpdated = marketData.lastUpdated.toISOString();
+      payload.symbol = marketData.symbol;
+      payload.timeframe = marketData.timeframe;
+      payload.quoteAsset = marketData.vsCurrency.toUpperCase();
+
+      hydrateHeader();
+    } catch (error) {
+      console.error('Failed to refresh OHLC data', error);
+    } finally {
+      isAutoUpdating = false;
+    }
+  }, MARKET_CONFIG.autoUpdateMs);
+}
+
+function clearAutoUpdateTimer() {
+  if (autoUpdateTimerId) {
+    clearInterval(autoUpdateTimerId);
+    autoUpdateTimerId = null;
+  }
+  isAutoUpdating = false;
+}
+
 function renderSignals() {
   signalsList.innerHTML = '';
 
-  payload.signals.forEach((signal) => {
+  const signals = Array.isArray(payload.signals) ? payload.signals : [];
+
+  signals.forEach((signal) => {
     const item = document.createElement('li');
     item.className = 'card p-4 transition hover:border-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer';
     item.tabIndex = 0;
@@ -149,8 +357,8 @@ function renderSignals() {
     });
   });
 
-  if (payload.signals.length > 0) {
-    setActiveSignal(payload.signals[0], signalsList.firstElementChild);
+  if (signals.length > 0 && signalsList.firstElementChild) {
+    setActiveSignal(signals[0], signalsList.firstElementChild);
   }
 }
 
@@ -158,7 +366,9 @@ function renderMetrics() {
   if (!metricsGrid) return;
 
   metricsGrid.innerHTML = '';
-  payload.metrics.forEach((metric) => {
+  const metrics = Array.isArray(payload.metrics) ? payload.metrics : [];
+
+  metrics.forEach((metric) => {
     const card = document.createElement('div');
     card.className = 'card p-5 flex flex-col gap-2';
     card.innerHTML = `
@@ -170,12 +380,17 @@ function renderMetrics() {
   });
 }
 
-function hydrateHeader() {
+function hydrateHeader({ message, lastUpdated } = {}) {
   if (symbolEl) {
-    symbolEl.textContent = payload.symbol;
+    symbolEl.textContent = payload.symbol || composeSymbol(payload.quoteAsset);
   }
   if (subtitleEl) {
-    subtitleEl.textContent = `${payload.timeframe} • обновлено ${formatRelative(payload.lastUpdated)}`;
+    const updatedAt = lastUpdated || payload.lastUpdated || new Date().toISOString();
+    const timeframe = payload.timeframe || MARKET_CONFIG.timeframe || '';
+    const baseText = timeframe
+      ? `${timeframe} • обновлено ${formatRelative(updatedAt)}`
+      : `Обновлено ${formatRelative(updatedAt)}`;
+    subtitleEl.textContent = message ? `${baseText} • ${message}` : baseText;
   }
 }
 
@@ -308,13 +523,41 @@ function setActiveSignal(signal, element) {
     `;
   }
 
-  if (chart && candleSeries) {
+  if (chart && candleSeries && latestCandles.length > 0) {
     const focusTime = isoToUnix(signal.timestamp);
-    chart.timeScale().setVisibleRange({
-      from: focusTime - 60 * 60 * 12,
-      to: focusTime + 60 * 60 * 12
-    });
+    const firstCandleTime = latestCandles[0]?.time;
+    const lastCandleTime = latestCandles[latestCandles.length - 1]?.time;
+
+    if (
+      Number.isFinite(firstCandleTime) &&
+      Number.isFinite(lastCandleTime) &&
+      focusTime >= firstCandleTime &&
+      focusTime <= lastCandleTime
+    ) {
+      chart.timeScale().setVisibleRange({
+        from: focusTime - 60 * 60 * 12,
+        to: focusTime + 60 * 60 * 12
+      });
+    } else if (Number.isFinite(firstCandleTime) && Number.isFinite(lastCandleTime)) {
+      chart.timeScale().setVisibleRange({
+        from: firstCandleTime,
+        to: lastCandleTime
+      });
+    }
   }
+}
+
+function composeSymbol(quoteCurrency = payload?.quoteAsset) {
+  const baseAsset = (payload?.baseAsset || mockPayload?.baseAsset || MARKET_CONFIG.coinId || '')
+    .toString()
+    .toUpperCase();
+  const quoteAsset = (quoteCurrency || MARKET_CONFIG.vsCurrency || 'usd').toString().toUpperCase();
+
+  if (!baseAsset) {
+    return quoteAsset;
+  }
+
+  return `${baseAsset}/${quoteAsset}`;
 }
 
 function isoToUnix(isoString) {
@@ -322,12 +565,37 @@ function isoToUnix(isoString) {
 }
 
 function formatPrice(value) {
-  return new Intl.NumberFormat('ru-RU', {
-    style: 'currency',
-    currency: payload.quoteAsset,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(value);
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return value;
+  }
+
+  const fallbackCurrency = (MARKET_CONFIG.vsCurrency || 'usd').toUpperCase();
+  let currency = (payload.quoteAsset || fallbackCurrency).toUpperCase();
+
+  try {
+    return new Intl.NumberFormat('ru-RU', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch (error) {
+    console.warn(`Unsupported currency "${currency}". Falling back to ${fallbackCurrency}.`, error);
+
+    currency = fallbackCurrency;
+
+    try {
+      return new Intl.NumberFormat('ru-RU', {
+        style: 'currency',
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(amount);
+    } catch {
+      return `${amount.toFixed(2)} ${currency}`;
+    }
+  }
 }
 
 function formatDateTime(isoString) {
@@ -339,9 +607,15 @@ function formatDateTime(isoString) {
   }).format(new Date(isoString));
 }
 
-function formatRelative(isoString) {
-  const target = new Date(isoString).getTime();
-  const diffMs = Date.now() - target;
+function formatRelative(value) {
+  const targetDate = value instanceof Date ? value : new Date(value);
+  const targetTime = targetDate.getTime();
+
+  if (!Number.isFinite(targetTime)) {
+    return '—';
+  }
+
+  const diffMs = Date.now() - targetTime;
   const minutes = Math.max(Math.round(diffMs / 60000), 0);
 
   if (minutes <= 1) return 'только что';
