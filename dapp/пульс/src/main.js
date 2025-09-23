@@ -9,15 +9,23 @@ const subtitleEl = document.getElementById('indicator-subtitle');
 const symbolEl = document.getElementById('indicator-symbol');
 const metricsGrid = document.getElementById('metrics-grid');
 const emailBadge = document.getElementById('email-badge');
+const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
+const subscribeForm = document.getElementById('subscribe-form');
+const subscribeInput = document.getElementById('subscribe-email');
+const subscribeStatus = document.getElementById('subscribe-status');
+const subscribeButton = document.getElementById('subscribe-button');
 
 let candleSeries;
 let chart;
 let activeSignalElement = null;
 
-if (!chartContainer || !signalsList || !detailsContainer) {
-  console.warn('UI containers are missing. Check index.html layout.');
-} else {
+bindFaqAccordion();
+bindEmailSubscribe();
+
+if (chartContainer && signalsList && detailsContainer) {
   initialiseDashboard();
+} else {
+  console.warn('UI containers are missing. Check index.html layout.');
 }
 
 function initialiseDashboard() {
@@ -171,6 +179,84 @@ function hydrateHeader() {
   }
 }
 
+function bindFaqAccordion() {
+  if (!accordionTriggers.length) return;
+
+  accordionTriggers.forEach((trigger) => {
+    const panelId = trigger.getAttribute('aria-controls');
+    if (!panelId) return;
+
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+
+    trigger.addEventListener('click', () => toggleAccordion(trigger, panel));
+  });
+}
+
+function toggleAccordion(trigger, panel) {
+  const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
+  trigger.setAttribute('aria-expanded', String(!isExpanded));
+  panel.classList.toggle('hidden', isExpanded);
+  panel.setAttribute('aria-hidden', String(isExpanded));
+
+  const icon = trigger.querySelector('[data-accordion-icon]');
+  if (icon) {
+    icon.classList.toggle('rotate-180', !isExpanded);
+  }
+}
+
+function bindEmailSubscribe() {
+  if (!subscribeForm || !subscribeInput || !subscribeButton || !subscribeStatus) return;
+
+  const defaultButtonText = subscribeButton.textContent;
+
+  subscribeForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    const email = subscribeInput.value.trim();
+
+    subscribeStatus.textContent = '';
+    subscribeStatus.classList.remove('text-danger', 'text-success');
+    subscribeStatus.classList.add('text-muted');
+
+    subscribeInput.classList.remove('ring-2', 'ring-danger', 'ring-success', 'ring-offset-2', 'ring-offset-bg');
+
+    if (!isValidEmail(email)) {
+      subscribeStatus.textContent = 'Проверьте адрес электронной почты.';
+      subscribeStatus.classList.remove('text-muted');
+      subscribeStatus.classList.add('text-danger');
+      subscribeInput.classList.add('ring-2', 'ring-danger', 'ring-offset-2', 'ring-offset-bg');
+      subscribeInput.focus();
+      return;
+    }
+
+    subscribeButton.disabled = true;
+    subscribeButton.textContent = 'Отправляем…';
+
+    try {
+      const response = await mockSubscribe(email);
+      if (!response.ok) {
+        throw new Error('Mock request failed');
+      }
+
+      subscribeStatus.textContent = 'Готово! Мы пришлём актуальные сигналы на почту.';
+      subscribeStatus.classList.remove('text-muted');
+      subscribeStatus.classList.add('text-success');
+      subscribeInput.classList.add('ring-2', 'ring-success', 'ring-offset-2', 'ring-offset-bg');
+      subscribeForm.reset();
+    } catch (error) {
+      console.error(error);
+      subscribeStatus.textContent = 'Не удалось отправить подписку. Попробуйте снова.';
+      subscribeStatus.classList.remove('text-muted');
+      subscribeStatus.classList.add('text-danger');
+      subscribeInput.classList.add('ring-2', 'ring-danger', 'ring-offset-2', 'ring-offset-bg');
+    } finally {
+      subscribeButton.disabled = false;
+      subscribeButton.textContent = defaultButtonText;
+    }
+  });
+}
+
 function setActiveSignal(signal, element) {
   if (activeSignalElement) {
     activeSignalElement.classList.remove('ring-2', 'ring-accent', 'ring-offset-2', 'ring-offset-surface');
@@ -264,4 +350,16 @@ function formatRelative(isoString) {
   if (hours < 24) return `${hours} ч назад`;
   const days = Math.round(hours / 24);
   return `${days} дн назад`;
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function mockSubscribe() {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({ ok: true });
+    }, 700);
+  });
 }
