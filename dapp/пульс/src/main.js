@@ -31,6 +31,19 @@ const detailsContainer = document.getElementById('signal-details');
 const subtitleEl = document.getElementById('indicator-subtitle');
 const symbolEl = document.getElementById('indicator-symbol');
 const metricsGrid = document.getElementById('metrics-grid');
+const coinSummaryCard = document.getElementById('coin-summary-card');
+const coinSummaryAssetEl = document.getElementById('coin-summary-asset');
+const coinSummaryPriceEl = document.getElementById('coin-summary-price');
+const coinSummaryChangeEl = document.getElementById('coin-summary-change');
+const coinSummaryTimeframeEl = document.getElementById('coin-summary-timeframe');
+const coinSummaryUpdatedEl = document.getElementById('coin-summary-updated');
+const coinSummaryCoinEl = document.getElementById('coin-summary-coin');
+const coinSummarySignalTypeEl = document.getElementById('coin-summary-signal-type');
+const coinSummaryEntryEl = document.getElementById('coin-summary-entry');
+const coinSummaryRrEl = document.getElementById('coin-summary-rr');
+const coinSummaryTakeProfitEl = document.getElementById('coin-summary-take-profit');
+const coinSummaryStopLossEl = document.getElementById('coin-summary-stop-loss');
+const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-time');
 const emailBadge = document.getElementById('email-badge');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const subscribeForm = document.getElementById('subscribe-form');
@@ -42,6 +55,7 @@ const tickerContent = document.getElementById('ticker-content');
 let candleSeries;
 let chart;
 let activeSignalElement = null;
+let activeSignalId = null;
 let dashboardData = null;
 let refreshTimerId = null;
 let isRefreshing = false;
@@ -59,6 +73,7 @@ if (chartContainer && signalsList && detailsContainer) {
     hydrateHeader(dashboardData);
     renderMetrics(dashboardData);
     renderChart(dashboardData);
+    renderCoinSummary(dashboardData);
     renderSignals(dashboardData);
     if (tickerContent) {
       renderTicker(FALLBACK_TICKER_QUOTES, { message: TICKER_STATUS_UNAVAILABLE });
@@ -95,6 +110,7 @@ async function refreshDashboard() {
   hydrateHeader(dashboardData);
   renderMetrics(dashboardData);
   renderChart(dashboardData);
+  renderCoinSummary(dashboardData);
   renderSignals(dashboardData);
 }
 
@@ -433,7 +449,7 @@ function renderSignals(data) {
   if (!signalsList) return;
 
   const signals = Array.isArray(data?.signals) ? data.signals : [];
-  const previouslyActiveId = activeSignalElement?.dataset?.signalId || null;
+  const previouslyActiveId = activeSignalId;
 
   activeSignalElement = null;
   signalsList.innerHTML = '';
@@ -443,7 +459,7 @@ function renderSignals(data) {
     item.className = 'card p-4 transition hover:border-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer';
     item.tabIndex = 0;
 
-    const signalDomId = String(signal.id ?? `${signal.type}-${signal.timestamp}`);
+    const signalDomId = getSignalDomId(signal);
     item.dataset.signalId = signalDomId;
 
     const header = document.createElement('div');
@@ -493,14 +509,16 @@ function renderSignals(data) {
     if (emailBadge) {
       emailBadge.classList.add('hidden');
     }
+    activeSignalId = null;
+    renderCoinSummary(data, null);
     return;
   }
 
   const desiredSignal = previouslyActiveId
-    ? signals.find((candidate) => String(candidate.id ?? `${candidate.type}-${candidate.timestamp}`) === previouslyActiveId)
+    ? signals.find((candidate) => getSignalDomId(candidate) === previouslyActiveId)
     : signals[0];
   const targetSignal = desiredSignal || signals[0];
-  const targetId = targetSignal ? String(targetSignal.id ?? `${targetSignal.type}-${targetSignal.timestamp}`) : null;
+  const targetId = targetSignal ? getSignalDomId(targetSignal) : null;
 
   if (targetSignal && targetId) {
     const targetElement = Array.from(signalsList.children).find((child) => child.dataset.signalId === targetId);
@@ -508,6 +526,146 @@ function renderSignals(data) {
       setActiveSignal(targetSignal, targetElement, data);
     }
   }
+}
+
+function renderCoinSummary(data, activeSignal = null) {
+  if (!coinSummaryCard) return;
+
+  const coinId = data?.coinId || DEFAULT_COIN_ID;
+  coinSummaryCard.dataset.coinId = coinId;
+
+  const assetParts = [data?.baseAsset, data?.quoteAsset].filter(Boolean);
+  const assetLabel = assetParts.length ? assetParts.join('/') : data?.symbol || '—';
+
+  if (coinSummaryAssetEl) {
+    coinSummaryAssetEl.textContent = assetLabel;
+  }
+
+  if (coinSummaryTimeframeEl) {
+    coinSummaryTimeframeEl.textContent = `Таймфрейм ${data?.timeframe ?? '—'}`;
+  }
+
+  if (coinSummaryUpdatedEl) {
+    coinSummaryUpdatedEl.textContent = data?.lastUpdated
+      ? `Обновлено ${formatRelative(data.lastUpdated)}`
+      : 'Обновлено —';
+  }
+
+  if (coinSummaryCoinEl) {
+    coinSummaryCoinEl.textContent = `CoinGecko ID ${coinId}`;
+  }
+
+  const candles = Array.isArray(data?.candles) ? data.candles : [];
+  let changePct = null;
+  let changePriceInfo = null;
+  let lastPriceInfo = null;
+
+  if (candles.length) {
+    const sorted = [...candles].sort((a, b) => a.time - b.time);
+    const firstCandle = sorted[0];
+    const lastCandle = sorted[sorted.length - 1];
+
+    if (firstCandle && lastCandle) {
+      const absoluteChange = lastCandle.close - firstCandle.open;
+      changePct = firstCandle.open ? (absoluteChange / firstCandle.open) * 100 : 0;
+      changePriceInfo = formatPrice(absoluteChange, data);
+      lastPriceInfo = formatPrice(lastCandle.close, data);
+    }
+  }
+
+  if (coinSummaryPriceEl) {
+    if (lastPriceInfo) {
+      coinSummaryPriceEl.innerHTML = formatPriceMarkup(lastPriceInfo, 'coin-summary__ticker');
+    } else {
+      coinSummaryPriceEl.textContent = '—';
+    }
+  }
+
+  if (coinSummaryChangeEl) {
+    coinSummaryChangeEl.classList.remove('coin-summary__change--positive', 'coin-summary__change--negative');
+    if (typeof changePct === 'number' && changePriceInfo && lastPriceInfo) {
+      const pctPrefix = changePct >= 0 ? '+' : '';
+      coinSummaryChangeEl.textContent = `${pctPrefix}${changePct.toFixed(2)}% (${changePriceInfo.plainText})`;
+      if (changePct > 0) {
+        coinSummaryChangeEl.classList.add('coin-summary__change--positive');
+      } else if (changePct < 0) {
+        coinSummaryChangeEl.classList.add('coin-summary__change--negative');
+      }
+    } else {
+      coinSummaryChangeEl.textContent = '—';
+    }
+  }
+
+  const signals = Array.isArray(data?.signals) ? data.signals : [];
+  let resolvedSignal = activeSignal || null;
+
+  if (!resolvedSignal && activeSignalId) {
+    resolvedSignal = signals.find((candidate) => getSignalDomId(candidate) === activeSignalId) || null;
+  }
+
+  if (!resolvedSignal && signals.length) {
+    resolvedSignal = signals[0];
+  }
+
+  if (coinSummarySignalTypeEl) {
+    coinSummarySignalTypeEl.classList.remove('text-success', 'text-danger', 'text-muted');
+    if (resolvedSignal) {
+      coinSummarySignalTypeEl.textContent = resolvedSignal.type === 'BUY' ? 'Покупка' : 'Продажа';
+      coinSummarySignalTypeEl.classList.add(resolvedSignal.type === 'BUY' ? 'text-success' : 'text-danger');
+    } else {
+      coinSummarySignalTypeEl.textContent = '—';
+      coinSummarySignalTypeEl.classList.add('text-muted');
+    }
+  }
+
+  if (coinSummaryEntryEl) {
+    if (resolvedSignal && Number.isFinite(resolvedSignal.price)) {
+      coinSummaryEntryEl.innerHTML = formatPriceMarkup(formatPrice(resolvedSignal.price, data));
+    } else {
+      coinSummaryEntryEl.textContent = '—';
+    }
+  }
+
+  if (coinSummaryRrEl) {
+    if (resolvedSignal && Number.isFinite(resolvedSignal.riskReward)) {
+      coinSummaryRrEl.textContent = resolvedSignal.riskReward.toFixed(1);
+    } else {
+      coinSummaryRrEl.textContent = '—';
+    }
+  }
+
+  if (coinSummaryTakeProfitEl) {
+    if (resolvedSignal && Number.isFinite(resolvedSignal.takeProfit)) {
+      coinSummaryTakeProfitEl.innerHTML = formatPriceMarkup(formatPrice(resolvedSignal.takeProfit, data));
+    } else {
+      coinSummaryTakeProfitEl.textContent = '—';
+    }
+  }
+
+  if (coinSummaryStopLossEl) {
+    if (resolvedSignal && Number.isFinite(resolvedSignal.stopLoss)) {
+      coinSummaryStopLossEl.innerHTML = formatPriceMarkup(formatPrice(resolvedSignal.stopLoss, data));
+    } else {
+      coinSummaryStopLossEl.textContent = '—';
+    }
+  }
+
+  if (coinSummarySignalTimeEl) {
+    if (resolvedSignal?.timestamp) {
+      coinSummarySignalTimeEl.textContent = formatDateTime(resolvedSignal.timestamp);
+    } else {
+      coinSummarySignalTimeEl.textContent = '—';
+    }
+  }
+}
+
+function getSignalDomId(signal) {
+  if (!signal) return null;
+
+  const fallback = signal.type && signal.timestamp ? `${signal.type}-${signal.timestamp}` : null;
+  const rawId = signal.id ?? fallback;
+
+  return rawId != null ? String(rawId) : null;
 }
 
 function renderMetrics(data) {
@@ -642,6 +800,9 @@ function setActiveSignal(signal, element, data = dashboardData) {
   activeSignalElement = element;
   activeSignalElement?.classList.add('ring-2', 'ring-accent', 'ring-offset-2', 'ring-offset-surface');
 
+  const signalDomId = getSignalDomId(signal);
+  activeSignalId = signalDomId;
+
   if (emailBadge) {
     if (signal.emailSent) {
       emailBadge.classList.remove('hidden');
@@ -701,6 +862,8 @@ function setActiveSignal(signal, element, data = dashboardData) {
       to: focusTime + 60 * 60 * 12
     });
   }
+
+  renderCoinSummary(data, signal);
 }
 
 function isoToUnix(isoString) {
