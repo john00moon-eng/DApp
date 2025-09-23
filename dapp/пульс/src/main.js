@@ -340,13 +340,14 @@ function formatTickerPrice(value) {
   }
 
   const formatter = new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'USD',
+    currencyDisplay: 'narrowSymbol',
     minimumFractionDigits,
     maximumFractionDigits
   });
 
-  const formatted = formatter.format(value).replace(/\u00A0/g, '\u202F');
-
-  return `$${formatted}`;
+  return formatter.format(value).replace(/\u00A0/g, '\u202F').trim();
 }
 
 function renderChart(data) {
