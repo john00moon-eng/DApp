@@ -13,13 +13,64 @@
 <body class="bg-bg text-text font-inter">
   <header class="container mx-auto px-6 py-6 flex items-center justify-between">
     <img src="/public/assets/logo_pulse.svg" alt="Pulse Protocol" class="h-9">
-    <nav class="hidden md:flex items-center gap-6 text-muted">
-      <a href="#how" class="hover:text-text">Как работает</a>
-      <a href="#apr" class="hover:text-text">Доходность</a>
-      <a href="#faq" class="hover:text-text">FAQ</a>
-      <a href="#app" class="ml-2 inline-block bg-accent text-bg font-extrabold px-5 py-3 rounded-xl hover:opacity-90 transition">Запустить dApp</a>
-    </nav>
+    <div class="flex items-center gap-4">
+      <button
+        id="mobile-menu-button"
+        type="button"
+        class="md:hidden inline-flex h-11 w-11 items-center justify-center rounded-xl border border-grid text-muted transition hover:text-text hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+        aria-label="Открыть меню"
+        aria-controls="mobile-menu-panel"
+        aria-expanded="false"
+        aria-haspopup="dialog"
+      >
+        <span class="sr-only">Открыть меню</span>
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7" stroke-linecap="round"></line>
+          <line x1="4" y1="12" x2="20" y2="12" stroke-linecap="round"></line>
+          <line x1="4" y1="17" x2="20" y2="17" stroke-linecap="round"></line>
+        </svg>
+      </button>
+      <nav class="hidden md:flex items-center gap-6 text-muted">
+        <a href="#how" class="hover:text-text">Как работает</a>
+        <a href="#apr" class="hover:text-text">Доходность</a>
+        <a href="#faq" class="hover:text-text">FAQ</a>
+        <a href="#app" class="ml-2 inline-block bg-accent text-bg font-extrabold px-5 py-3 rounded-xl hover:opacity-90 transition">Запустить dApp</a>
+      </nav>
+    </div>
   </header>
+  <div id="mobile-menu" class="fixed inset-0 z-50 hidden md:hidden" aria-hidden="true">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" data-menu-overlay></div>
+    <div
+      id="mobile-menu-panel"
+      class="relative ml-auto flex h-full w-full max-w-xs flex-col border-l border-grid bg-surface shadow-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mobile-menu-title"
+      tabindex="-1"
+    >
+      <div class="flex items-center justify-between border-b border-grid px-6 py-5">
+        <h2 id="mobile-menu-title" class="text-lg font-semibold text-text">Навигация</h2>
+        <button
+          type="button"
+          class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-grid text-muted transition hover:text-text hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          aria-label="Закрыть меню"
+          data-menu-close
+        >
+          <span class="sr-only">Закрыть меню</span>
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <line x1="6" y1="6" x2="18" y2="18" stroke-linecap="round"></line>
+            <line x1="18" y1="6" x2="6" y2="18" stroke-linecap="round"></line>
+          </svg>
+        </button>
+      </div>
+      <nav class="flex flex-col gap-2 px-6 py-6 text-base text-muted">
+        <a href="#how" class="rounded-lg px-3 py-2 transition hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface">Как работает</a>
+        <a href="#apr" class="rounded-lg px-3 py-2 transition hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface">Доходность</a>
+        <a href="#faq" class="rounded-lg px-3 py-2 transition hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface">FAQ</a>
+        <a href="#app" class="mt-2 inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-sm font-extrabold uppercase tracking-wide text-bg transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface">Запустить dApp</a>
+      </nav>
+    </div>
+  </div>
   <main class="container mx-auto px-6">
     <section class="py-16 md:py-24">
       <h1 class="text-4xl md:text-6xl font-extrabold leading-tight max-w-4xl">Пульс рынка под контролем</h1>
@@ -253,6 +304,117 @@
       </nav>
     </div>
   </footer>
+  <script type="module">
+    const openButton = document.getElementById('mobile-menu-button');
+    const menuContainer = document.getElementById('mobile-menu');
+
+    if (!openButton || !menuContainer) {
+      console.warn('Элементы мобильного меню не найдены.');
+    } else {
+      const overlay = menuContainer.querySelector('[data-menu-overlay]');
+      const closeButton = menuContainer.querySelector('[data-menu-close]');
+      const menuLinks = Array.from(menuContainer.querySelectorAll('a'));
+      const focusableSelector = 'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
+      let lastFocusedElement = null;
+
+      const setExpandedState = (isOpen) => {
+        openButton.setAttribute('aria-expanded', String(isOpen));
+        menuContainer.setAttribute('aria-hidden', String(!isOpen));
+      };
+
+      const getFocusableElements = () =>
+        Array.from(menuContainer.querySelectorAll(focusableSelector)).filter(
+          (element) =>
+            !element.hasAttribute('disabled') &&
+            element.getAttribute('aria-hidden') !== 'true' &&
+            element.getClientRects().length > 0
+        );
+
+      const trapFocus = (event) => {
+        if (event.key !== 'Tab') return;
+
+        const focusableElements = getFocusableElements();
+        if (focusableElements.length === 0) return;
+
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+        const isShiftPressed = event.shiftKey;
+        const activeElement = document.activeElement;
+
+        if (isShiftPressed) {
+          if (activeElement === firstElement || !menuContainer.contains(activeElement)) {
+            event.preventDefault();
+            lastElement.focus();
+          }
+        } else if (activeElement === lastElement) {
+          event.preventDefault();
+          firstElement.focus();
+        }
+      };
+
+      const closeMenu = ({ restoreFocus = true } = {}) => {
+        if (menuContainer.classList.contains('hidden')) return;
+
+        menuContainer.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+        setExpandedState(false);
+        document.removeEventListener('keydown', handleKeydown);
+
+        if (restoreFocus && lastFocusedElement instanceof HTMLElement) {
+          lastFocusedElement.focus();
+        }
+      };
+
+      const handleKeydown = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeMenu();
+          return;
+        }
+
+        trapFocus(event);
+      };
+
+      const openMenu = () => {
+        lastFocusedElement = document.activeElement;
+        menuContainer.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden');
+        setExpandedState(true);
+
+        document.addEventListener('keydown', handleKeydown);
+
+        const focusableElements = getFocusableElements();
+        if (focusableElements.length > 0) {
+          focusableElements[0].focus();
+        }
+      };
+
+      openButton.addEventListener('click', () => {
+        if (menuContainer.classList.contains('hidden')) {
+          openMenu();
+        } else {
+          closeMenu();
+        }
+      });
+
+      closeButton?.addEventListener('click', () => closeMenu());
+      overlay?.addEventListener('click', () => closeMenu());
+      menuLinks.forEach((link) => link.addEventListener('click', () => closeMenu({ restoreFocus: false })));
+
+      const mediaQuery = window.matchMedia('(min-width: 768px)');
+      const handleMediaChange = (event) => {
+        if (event.matches) {
+          closeMenu({ restoreFocus: false });
+        }
+      };
+
+      if (typeof mediaQuery.addEventListener === 'function') {
+        mediaQuery.addEventListener('change', handleMediaChange);
+      } else if (typeof mediaQuery.addListener === 'function') {
+        mediaQuery.addListener(handleMediaChange);
+      }
+    }
+  </script>
   <script type="module" src="/dapp/пульс/src/main.js"></script>
 </body>
 </html>
