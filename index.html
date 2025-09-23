@@ -9,7 +9,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/src/style.css">
 </head>
 <body class="bg-bg text-text font-inter">
   <header class="container mx-auto px-6 py-6 flex items-center justify-between">
@@ -33,6 +32,34 @@
         <a href="#lore" class="bg-accent2 text-white font-extrabold px-6 py-3 rounded-xl hover:opacity-90 transition">Читать лор</a>
       </div>
     </section>
+    <section id="indicator" class="py-16 md:py-24 space-y-10">
+      <div class="grid gap-6 lg:grid-cols-[2fr,1fr]">
+        <div class="card p-6">
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 class="text-2xl font-bold">Индикатор Pulse Protocol</h2>
+              <p id="indicator-subtitle" class="text-sm text-muted mt-2">—</p>
+            </div>
+            <div class="text-right">
+              <div class="text-xs uppercase tracking-wide text-muted">Актив</div>
+              <div id="indicator-symbol" class="text-2xl font-extrabold">—</div>
+            </div>
+          </div>
+          <div class="mt-6 h-[320px] md:h-[420px]" id="chart-root"></div>
+        </div>
+        <div class="space-y-6">
+          <div class="card p-6">
+            <h3 class="text-lg font-semibold">Активные сигналы</h3>
+            <ul id="signals-list" class="mt-4 space-y-4"></ul>
+          </div>
+          <div class="card p-6">
+            <h3 class="text-lg font-semibold flex items-center gap-2">Детали сигнала <span id="email-badge" class="badge bg-accent/10 text-accent hidden">Email отправлен</span></h3>
+            <div id="signal-details" class="mt-4 text-sm leading-relaxed text-muted">Выберите сигнал, чтобы увидеть рыночный контекст и уровни управления риском.</div>
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-4 md:grid-cols-3" id="metrics-grid"></div>
+    </section>
   </main>
   <footer class="border-t border-grid mt-10">
     <div class="container mx-auto px-6 py-8 text-sm text-muted flex flex-col md:flex-row items-center justify-between gap-4">
@@ -45,6 +72,6 @@
       </nav>
     </div>
   </footer>
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/dapp/пульс/src/main.js"></script>
 </body>
 </html>
