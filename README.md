@@ -13,7 +13,7 @@ pulse-protocol/
 ├─ public/
 │ └─ assets/
 │ ├─ logo_pulse.svg
-│ └─ favicon.png
+│ └─ favicon.svg
 ├─ src/
 │ ├─ style.css
 │ ├─ main.js
