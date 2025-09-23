@@ -1,6 +1,9 @@
 import './style.css';
 import { createChart, CrosshairMode } from 'lightweight-charts';
-import payload from './data/mockSignals.json';
+import mockPayload from './data/mockSignals.json';
+
+const DEFAULT_COIN_ID = 'bitcoin';
+const REFRESH_INTERVAL = 60_000;
 
 const chartContainer = document.getElementById('chart-root');
 const signalsList = document.getElementById('signals-list');
@@ -18,66 +21,171 @@ const subscribeButton = document.getElementById('subscribe-button');
 let candleSeries;
 let chart;
 let activeSignalElement = null;
+let dashboardData = null;
+let refreshTimerId = null;
+let isRefreshing = false;
 
 bindFaqAccordion();
 bindEmailSubscribe();
 
 if (chartContainer && signalsList && detailsContainer) {
-  initialiseDashboard();
+  initialiseDashboard().catch((error) => {
+    console.error('Не удалось инициализировать дашборд', error);
+    dashboardData = createPayloadFromMock(mockPayload);
+    dashboardData.metrics = buildMetricsFromCandles(dashboardData);
+    hydrateHeader(dashboardData);
+    renderMetrics(dashboardData);
+    renderChart(dashboardData);
+    renderSignals(dashboardData);
+  });
 } else {
   console.warn('UI containers are missing. Check index.html layout.');
 }
 
-function initialiseDashboard() {
-  hydrateHeader();
-  renderMetrics();
-  renderChart();
-  renderSignals();
+async function initialiseDashboard() {
+  await refreshDashboard();
+  scheduleAutoRefresh();
 }
 
-function renderChart() {
-  const width = chartContainer.clientWidth || 720;
-  const height = chartContainer.clientHeight || 360;
+async function refreshDashboard() {
+  if (isRefreshing) return;
 
-  chart = createChart(chartContainer, {
-    width,
-    height,
-    layout: {
-      background: { type: 'solid', color: 'transparent' },
-      textColor: '#E6E7ED',
-      fontFamily: 'Inter, system-ui, sans-serif'
-    },
-    grid: {
-      vertLines: { color: 'rgba(40, 44, 63, 0.45)' },
-      horzLines: { color: 'rgba(40, 44, 63, 0.45)' }
-    },
-    rightPriceScale: { borderColor: 'rgba(40, 44, 63, 0.45)' },
-    timeScale: {
-      borderColor: 'rgba(40, 44, 63, 0.45)',
-      timeVisible: true,
-      secondsVisible: false,
-      fixLeftEdge: true,
-      fixRightEdge: true,
-      barSpacing: 12
-    },
-    crosshair: {
-      mode: CrosshairMode.Normal,
-      vertLine: { color: 'rgba(255, 60, 120, 0.35)', labelBackgroundColor: '#FF3C78' },
-      horzLine: { color: 'rgba(255, 255, 255, 0.2)', labelBackgroundColor: '#3A3E59' }
-    }
-  });
+  isRefreshing = true;
 
-  candleSeries = chart.addCandlestickSeries({
-    upColor: '#46C078',
-    borderUpColor: '#46C078',
-    wickUpColor: '#46C078',
-    downColor: '#DC5A78',
-    borderDownColor: '#DC5A78',
-    wickDownColor: '#DC5A78'
-  });
+  try {
+    dashboardData = await fetchOhlcData(DEFAULT_COIN_ID);
+  } catch (error) {
+    console.error('Не удалось получить данные CoinGecko. Используем mockSignals.json.', error);
+    dashboardData = createPayloadFromMock(mockPayload);
+  } finally {
+    isRefreshing = false;
+  }
 
-  const candleData = payload.candles.map((point) => ({
-    time: isoToUnix(point.time),
+  if (!dashboardData) return;
+
+  dashboardData.metrics = buildMetricsFromCandles(dashboardData);
+  hydrateHeader(dashboardData);
+  renderMetrics(dashboardData);
+  renderChart(dashboardData);
+  renderSignals(dashboardData);
+}
+
+function scheduleAutoRefresh() {
+  if (refreshTimerId) {
+    clearInterval(refreshTimerId);
+  }
+
+  refreshTimerId = setInterval(() => {
+    refreshDashboard();
+  }, REFRESH_INTERVAL);
+}
+
+async function fetchOhlcData(coinId = DEFAULT_COIN_ID) {
+  const response = await fetch(
+    `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/ohlc?vs_currency=usd&days=1`
+  );
+
+  if (!response.ok) {
+    throw new Error(`CoinGecko responded with status ${response.status}`);
+  }
+
+  const raw = await response.json();
+  if (!Array.isArray(raw)) {
+    throw new Error('CoinGecko OHLC response is not an array.');
+  }
+
+  const candles = raw
+    .map((entry) => {
+      if (!Array.isArray(entry) || entry.length < 5) {
+        return null;
+      }
+
+      const [timestamp, open, high, low, close] = entry;
+      const time = Math.floor(Number(timestamp) / 1000);
+      const parsed = {
+        time,
+        open: Number(open),
+        high: Number(high),
+        low: Number(low),
+        close: Number(close)
+      };
+
+      if (Object.values(parsed).some((value) => !Number.isFinite(value))) {
+        return null;
+      }
+
+      return parsed;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+
+  if (!candles.length) {
+    throw new Error('CoinGecko OHLC response does not contain candle data.');
+  }
+
+  const basePayload = createPayloadFromMock(mockPayload);
+  basePayload.candles = candles;
+  basePayload.lastUpdated = new Date().toISOString();
+  basePayload.coinId = coinId;
+
+  return basePayload;
+}
+
+function renderChart(data) {
+  if (!chart) {
+    const width = chartContainer.clientWidth || 720;
+    const height = chartContainer.clientHeight || 360;
+
+    chart = createChart(chartContainer, {
+      width,
+      height,
+      layout: {
+        background: { type: 'solid', color: 'transparent' },
+        textColor: '#E6E7ED',
+        fontFamily: 'Inter, system-ui, sans-serif'
+      },
+      grid: {
+        vertLines: { color: 'rgba(40, 44, 63, 0.45)' },
+        horzLines: { color: 'rgba(40, 44, 63, 0.45)' }
+      },
+      rightPriceScale: { borderColor: 'rgba(40, 44, 63, 0.45)' },
+      timeScale: {
+        borderColor: 'rgba(40, 44, 63, 0.45)',
+        timeVisible: true,
+        secondsVisible: false,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        barSpacing: 12
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: 'rgba(255, 60, 120, 0.35)', labelBackgroundColor: '#FF3C78' },
+        horzLine: { color: 'rgba(255, 255, 255, 0.2)', labelBackgroundColor: '#3A3E59' }
+      }
+    });
+
+    candleSeries = chart.addCandlestickSeries({
+      upColor: '#46C078',
+      borderUpColor: '#46C078',
+      wickUpColor: '#46C078',
+      downColor: '#DC5A78',
+      borderDownColor: '#DC5A78',
+      wickDownColor: '#DC5A78'
+    });
+
+    const initialHeight = height;
+    window.addEventListener('resize', () => {
+      if (!chart || !chartContainer) return;
+      chart.resize(chartContainer.clientWidth, chartContainer.clientHeight || initialHeight);
+    });
+  }
+
+  if (!candleSeries || !data?.candles?.length) {
+    return;
+  }
+
+  const candleData = data.candles.map((point) => ({
+    time: point.time,
     open: point.open,
     high: point.high,
     low: point.low,
@@ -86,8 +194,8 @@ function renderChart() {
 
   candleSeries.setData(candleData);
   candleSeries.setMarkers(
-    payload.signals.map((signal) => {
-      const priceInfo = formatPrice(signal.price);
+    (data.signals || []).map((signal) => {
+      const priceInfo = formatPrice(signal.price, data);
 
       return {
         time: isoToUnix(signal.timestamp),
@@ -100,19 +208,24 @@ function renderChart() {
   );
 
   chart.timeScale().fitContent();
-
-  window.addEventListener('resize', () => {
-    chart.resize(chartContainer.clientWidth, chartContainer.clientHeight || height);
-  });
 }
 
-function renderSignals() {
+function renderSignals(data) {
+  if (!signalsList) return;
+
+  const signals = Array.isArray(data?.signals) ? data.signals : [];
+  const previouslyActiveId = activeSignalElement?.dataset?.signalId || null;
+
+  activeSignalElement = null;
   signalsList.innerHTML = '';
 
-  payload.signals.forEach((signal) => {
+  signals.forEach((signal) => {
     const item = document.createElement('li');
     item.className = 'card p-4 transition hover:border-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer';
     item.tabIndex = 0;
+
+    const signalDomId = String(signal.id ?? `${signal.type}-${signal.timestamp}`);
+    item.dataset.signalId = signalDomId;
 
     const header = document.createElement('div');
     header.className = 'flex items-start justify-between gap-3';
@@ -121,7 +234,7 @@ function renderSignals() {
     badge.className = `badge ${signal.type === 'BUY' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`;
     badge.textContent = signal.type === 'BUY' ? 'Buy сигнал' : 'Sell сигнал';
 
-    const priceInfo = formatPrice(signal.price);
+    const priceInfo = formatPrice(signal.price, data);
     const price = document.createElement('div');
     price.className = 'text-lg font-bold';
     price.innerHTML = formatPriceMarkup(priceInfo);
@@ -147,25 +260,52 @@ function renderSignals() {
     item.append(header, meta, context, emailTag);
     signalsList.append(item);
 
-    item.addEventListener('click', () => setActiveSignal(signal, item));
+    item.addEventListener('click', () => setActiveSignal(signal, item, data));
     item.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        setActiveSignal(signal, item);
+        setActiveSignal(signal, item, data);
       }
     });
   });
 
-  if (payload.signals.length > 0) {
-    setActiveSignal(payload.signals[0], signalsList.firstElementChild);
+  if (!signals.length) {
+    detailsContainer.innerHTML = '';
+    if (emailBadge) {
+      emailBadge.classList.add('hidden');
+    }
+    return;
+  }
+
+  const desiredSignal = previouslyActiveId
+    ? signals.find((candidate) => String(candidate.id ?? `${candidate.type}-${candidate.timestamp}`) === previouslyActiveId)
+    : signals[0];
+  const targetSignal = desiredSignal || signals[0];
+  const targetId = targetSignal ? String(targetSignal.id ?? `${targetSignal.type}-${targetSignal.timestamp}`) : null;
+
+  if (targetSignal && targetId) {
+    const targetElement = Array.from(signalsList.children).find((child) => child.dataset.signalId === targetId);
+    if (targetElement) {
+      setActiveSignal(targetSignal, targetElement, data);
+    }
   }
 }
 
-function renderMetrics() {
+function renderMetrics(data) {
   if (!metricsGrid) return;
 
   metricsGrid.innerHTML = '';
-  payload.metrics.forEach((metric) => {
+  const metrics = Array.isArray(data?.metrics) ? data.metrics : [];
+
+  if (!metrics.length) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'card p-5 text-sm text-muted';
+    placeholder.textContent = 'Нет доступных метрик для отображения.';
+    metricsGrid.append(placeholder);
+    return;
+  }
+
+  metrics.forEach((metric) => {
     const card = document.createElement('div');
     card.className = 'card p-5 flex flex-col gap-2';
     card.innerHTML = `
@@ -177,12 +317,23 @@ function renderMetrics() {
   });
 }
 
-function hydrateHeader() {
+function hydrateHeader(data) {
+  if (!data) return;
+
   if (symbolEl) {
-    symbolEl.textContent = payload.symbol;
+    const fallbackSymbol = [data.baseAsset, data.quoteAsset].filter(Boolean).join('/') || data.symbol || '—';
+    symbolEl.textContent = fallbackSymbol;
   }
+
   if (subtitleEl) {
-    subtitleEl.textContent = `${payload.timeframe} • обновлено ${formatRelative(payload.lastUpdated)}`;
+    const subtitleParts = [];
+    if (data.timeframe) {
+      subtitleParts.push(data.timeframe);
+    }
+    if (data.lastUpdated) {
+      subtitleParts.push(`обновлено ${formatRelative(data.lastUpdated)}`);
+    }
+    subtitleEl.textContent = subtitleParts.join(' • ');
   }
 }
 
@@ -264,7 +415,7 @@ function bindEmailSubscribe() {
   });
 }
 
-function setActiveSignal(signal, element) {
+function setActiveSignal(signal, element, data = dashboardData) {
   if (activeSignalElement) {
     activeSignalElement.classList.remove('ring-2', 'ring-accent', 'ring-offset-2', 'ring-offset-surface');
   }
@@ -283,9 +434,9 @@ function setActiveSignal(signal, element) {
 
   if (detailsContainer) {
     const confidence = Math.round(signal.confidence * 100);
-    const entryPriceInfo = formatPrice(signal.price);
-    const takeProfitInfo = formatPrice(signal.takeProfit);
-    const stopLossInfo = formatPrice(signal.stopLoss);
+    const entryPriceInfo = formatPrice(signal.price, data);
+    const takeProfitInfo = formatPrice(signal.takeProfit, data);
+    const stopLossInfo = formatPrice(signal.stopLoss, data);
     const entryPriceMarkup = formatPriceMarkup(entryPriceInfo, 'ml-2 text-xs uppercase tracking-wide text-muted');
     const takeProfitMarkup = formatPriceMarkup(
       takeProfitInfo,
@@ -296,7 +447,7 @@ function setActiveSignal(signal, element) {
       <div class="space-y-4">
         <div class="flex items-center justify-between text-xs uppercase tracking-wide text-muted">
           <span>${formatDateTime(signal.timestamp)}</span>
-          <span>${payload.timeframe}</span>
+          <span>${data?.timeframe ?? ''}</span>
         </div>
         <div class="text-2xl font-bold ${signal.type === 'BUY' ? 'text-success' : 'text-danger'}">
           ${signal.type === 'BUY' ? 'Покупка' : 'Продажа'} @ ${entryPriceMarkup}
@@ -337,8 +488,76 @@ function isoToUnix(isoString) {
   return Math.floor(new Date(isoString).getTime() / 1000);
 }
 
-function formatPrice(value) {
-  const ticker = payload.quoteAsset;
+function createPayloadFromMock(source) {
+  const clone = JSON.parse(JSON.stringify(source));
+  const candles = Array.isArray(clone.candles) ? clone.candles : [];
+
+  clone.candles = candles
+    .map((point) => {
+      const time = typeof point.time === 'number' ? point.time : isoToUnix(point.time);
+      const open = Number(point.open);
+      const high = Number(point.high);
+      const low = Number(point.low);
+      const close = Number(point.close);
+
+      if ([time, open, high, low, close].some((value) => !Number.isFinite(value))) {
+        return null;
+      }
+
+      return { time, open, high, low, close };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+
+  clone.lastUpdated = new Date().toISOString();
+  clone.coinId = clone.coinId || DEFAULT_COIN_ID;
+
+  return clone;
+}
+
+function buildMetricsFromCandles(data) {
+  const candles = Array.isArray(data?.candles) ? data.candles : [];
+  if (!candles.length) {
+    return Array.isArray(data?.metrics) ? data.metrics : [];
+  }
+
+  const sortedCandles = [...candles].sort((a, b) => a.time - b.time);
+  const first = sortedCandles[0];
+  const last = sortedCandles[sortedCandles.length - 1];
+
+  const high = sortedCandles.reduce((acc, candle) => Math.max(acc, candle.high), Number.NEGATIVE_INFINITY);
+  const low = sortedCandles.reduce((acc, candle) => Math.min(acc, candle.low), Number.POSITIVE_INFINITY);
+  const absoluteChange = last.close - first.open;
+  const changePct = first.open ? (absoluteChange / first.open) * 100 : 0;
+
+  const lastPrice = formatPrice(last.close, data);
+  const changePrice = formatPrice(absoluteChange, data);
+  const highPrice = formatPrice(high, data);
+  const lowPrice = formatPrice(low, data);
+
+  const pctPrefix = changePct >= 0 ? '+' : '';
+
+  return [
+    {
+      label: 'Последняя цена',
+      value: lastPrice.plainText,
+      description: 'Закрытие последней свечи по данным CoinGecko'
+    },
+    {
+      label: 'Изменение за 24ч',
+      value: `${pctPrefix}${changePct.toFixed(2)}% (${changePrice.plainText})`,
+      description: 'Разница между первой и последней свечами выбранного периода'
+    },
+    {
+      label: 'Диапазон 24ч',
+      value: `${highPrice.plainText} / ${lowPrice.plainText}`,
+      description: 'Максимум и минимум цены за последние сутки'
+    }
+  ];
+}
+
+function formatPrice(value, data = dashboardData) {
+  const ticker = data?.quoteAsset || 'USD';
   const currencyOverrides = {
     USDT: 'USD',
     USDC: 'USD',
