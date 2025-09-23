@@ -18,7 +18,6 @@ pulse-protocol/
 │ ├─ style.css
 │ ├─ main.js
 │ └─ data/
-│ └─ mockSignals.json
 ├─ tailwind.config.js
 ├─ postcss.config.js
 ├─ package.json
@@ -44,7 +43,6 @@ pulse-protocol/
 - **Vite** — сборка / дев-сервер  
 - **JavaScript (ESModules)** — логика / график  
 - **Lightweight Charts** — графики свечей + сигналы  
-- Mock API (локальные файлы) для development  
 - Настройки + lint + prettier (если применимо)
 
 ---
@@ -72,8 +70,8 @@ pulse-protocol/
 
 5. Формы и API  
    - Подписка на e-mail: `POST /api/subscribe-email`  
-   - Сигналы: `GET /api/signals?symbol=BTCUSDT&timeframe=1h`  
-   - Пока использовать mock-данные, но архитектура должна позволять подключение реального API
+   - Сигналы: картточка с характеристокой монеты и хактерисками сигнала
+   - архитектура должна позволять подключение реального API
 
 6. Контент и локализация  
    - Использовать Markdown-файлы или аналогичную систему для контента  
