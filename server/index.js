@@ -10,7 +10,8 @@ dotenv.config();
 
 const app = express();
 const PORT = Number.parseInt(process.env.PORT ?? '3001', 10) || 3001;
-const ZAPIER_TOKEN = process.env.ZAPIER_TOKEN ?? '';
+const ZAPIER_SECRET = process.env.ZAPIER_WEBHOOK_SECRET ?? process.env.ZAPIER_TOKEN ?? '';
+const TOKEN_HEADER_NAME = process.env.ZAPIER_TOKEN_HEADER ?? 'X-Zapier-Token';
 
 const HISTORY_LIMIT = (() => {
   const rawLimit = process.env.ZAPIER_HISTORY_LIMIT;
@@ -78,6 +79,37 @@ const parseOrigins = () => {
   return list.length > 0 ? list : undefined;
 };
 
+const normaliseTokenCandidate = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item ?? '').trim()).find(Boolean) ?? '';
+  }
+
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  return String(value).trim();
+};
+
+const extractZapierToken = (req) => {
+  const headerToken = normaliseTokenCandidate(req.get(TOKEN_HEADER_NAME));
+  if (headerToken) {
+    return headerToken;
+  }
+
+  const authorizationHeader = normaliseTokenCandidate(req.get('Authorization'));
+  if (!authorizationHeader) {
+    return '';
+  }
+
+  const [scheme, token] = authorizationHeader.split(' ');
+  if (scheme && scheme.toLowerCase() === 'bearer') {
+    return normaliseTokenCandidate(token);
+  }
+
+  return '';
+};
+
 app.use(
   cors({
     origin: parseOrigins(),
@@ -85,17 +117,20 @@ app.use(
 );
 app.use(express.json({ limit: '1mb' }));
 
-if (!ZAPIER_TOKEN) {
+if (!ZAPIER_SECRET) {
   console.warn(
-    '[zapier-hook] ZAPIER_TOKEN is not set. Webhook calls will be rejected until it is configured.',
+    '[zapier-hook] ZAPIER_WEBHOOK_SECRET is not set. Webhook calls will be rejected until it is configured.',
   );
 }
 
 app.post('/api/zapier-hook', async (req, res) => {
-  const providedToken = req.get('X-Zapier-Token');
+  const providedToken = extractZapierToken(req);
 
-  if (!providedToken || providedToken !== ZAPIER_TOKEN) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!providedToken || providedToken !== ZAPIER_SECRET) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      hint: `Provide a valid token via the \`${TOKEN_HEADER_NAME}\` header or the Authorization: Bearer header.`,
+    });
   }
 
   const payload = req.body;
