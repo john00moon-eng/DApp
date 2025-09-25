@@ -62,8 +62,41 @@ Lightweight Charts / TradingView widget, оверлей маркеров.
 таймфрейм).
 3. Добавьте фильтр Zapier, чтобы пропускать только нужные события (например, `event = BUY`).
 4. Выберите действие: сообщение в Telegram/Slack, запись в Google Sheets/Notion, вызов Webhook или собственного API.
-5. Включите Zap и проведите финальный тест — TradingView должен отправить письмо, поля корректно распознаваться, а действие
-запускаться без ошибок.
+5. В качестве конечной точки вебхука используйте URL вашего деплоя Pulse Protocol: `https://<ваш-домен>/api/zapier-hook`. В шаге **Webhooks by Zapier** укажите заголовок `Authorization: Bearer <секрет>` (при необходимости можно добавить и `X-Zapier-Token: <секрет>`), чтобы ключ не попадал в URL.
+6. При необходимости можно завести собственный промежуточный эндпоинт (proxy), который добавит секрет к запросу перед отправкой на `/api/zapier-hook`.
+7. Включите Zap и проведите финальный тест — TradingView должен отправить письмо, поля корректно распознаваться, а действие
+   запускаться без ошибок.
+
+> ℹ️ Сервер автоматически проверяет переменную `ZAPIER_WEBHOOK_SECRET` (или устаревшую `ZAPIER_TOKEN`) только в заголовках `Authorization: Bearer` и `X-Zapier-Token`.
+
+#### Как безопасно хранить и проверять секрет
+1. Сгенерируйте длинный случайный токен (32–64 байт) и сохраните его в переменной окружения деплоя, например `ZAPIER_WEBHOOK_SECRET` в настройках Vercel.
+2. На стороне Zapier передавайте этот токен только в заголовке `Authorization: Bearer <секрет>` или в пользовательском заголовке, который укажете в переменной `ZAPIER_TOKEN_HEADER`.
+3. Если площадка не поддерживает пользовательские заголовки, используйте собственный прокси-эндпоинт, который добавит секрет перед пересылкой запроса на `/api/zapier-hook`.
+4. Проверка на сервере может выглядеть так (пример Next.js API Route на Vercel):
+   ```ts
+   import type { NextApiRequest, NextApiResponse } from 'next';
+
+   const secret = process.env.ZAPIER_WEBHOOK_SECRET ?? '';
+
+   export default function handler(req: NextApiRequest, res: NextApiResponse) {
+     if (req.method !== 'POST') {
+       return res.status(405).json({ error: 'Method Not Allowed' });
+     }
+
+     const authHeader = req.headers.authorization ?? '';
+     const token = authHeader.startsWith('Bearer ')
+       ? authHeader.slice('Bearer '.length).trim()
+       : '';
+
+     if (!secret || token !== secret) {
+       return res.status(401).json({ error: 'Unauthorized' });
+     }
+
+     // Дальнейшая обработка полезной нагрузки
+     return res.status(202).json({ status: 'accepted' });
+   }
+   ```
 
 ### Проверка и безопасность
 - Храните уникальный адрес Zapier в секрете, чтобы избежать спама.
