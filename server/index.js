@@ -6,6 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 
+import {
+  getIndicatorHistory,
+  getIndicatorDatabasePath,
+  getLatestIndicatorEvent,
+  initIndicatorStorage,
+  storeIndicatorEvent
+} from './indicatorStorage.js';
+
 dotenv.config();
 
 const app = express();
@@ -45,6 +53,11 @@ const ensureStorage = async () => {
       console.error('[zapier-hook] Failed to read log file:', error);
       history = [];
     }
+  }
+  try {
+    await initIndicatorStorage(dataDirectory);
+  } catch (error) {
+    console.error('[zapier-hook] Failed to initialise indicator database:', error);
   }
 };
 
@@ -161,6 +174,12 @@ app.post('/api/zapier-hook', async (req, res) => {
 
   await rememberEvent(record);
 
+  try {
+    storeIndicatorEvent(record);
+  } catch (error) {
+    console.error('[zapier-hook] Failed to persist indicator event:', error);
+  }
+
   return res.status(202).json({ status: 'accepted', id: eventId });
 });
 
@@ -174,6 +193,36 @@ app.get('/api/zapier-hook/latest', (req, res) => {
 
 app.get('/api/zapier-hook/history', (req, res) => {
   return res.json({ items: history, count: history.length });
+});
+
+app.get('/api/indicator/latest', (req, res) => {
+  try {
+    const latest = getLatestIndicatorEvent();
+    if (!latest) {
+      return res.status(204).end();
+    }
+
+    return res.json(latest);
+  } catch (error) {
+    console.error('[zapier-hook] Failed to fetch latest indicator event:', error);
+    return res.status(500).json({ error: 'Failed to load indicator values' });
+  }
+});
+
+app.get('/api/indicator/history', (req, res) => {
+  const { limit } = req.query;
+
+  try {
+    const items = getIndicatorHistory(limit ? Number.parseInt(limit, 10) : undefined);
+    return res.json({
+      items,
+      count: items.length,
+      database: getIndicatorDatabasePath()
+    });
+  } catch (error) {
+    console.error('[zapier-hook] Failed to fetch indicator history:', error);
+    return res.status(500).json({ error: 'Failed to load indicator history' });
+  }
 });
 
 app.use((err, req, res, next) => {
