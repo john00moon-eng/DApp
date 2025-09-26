@@ -375,6 +375,38 @@
               </div>
               <div id="automation-insights-grid" class="mt-4 grid gap-3 sm:grid-cols-2"></div>
             </div>
+            <div id="automation-history-chart" class="mt-6 hidden">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <span class="text-xs uppercase tracking-wide text-muted">Динамика показателей</span>
+                <div class="automation-chart-legend" data-chart-legend>
+                  <span class="automation-chart-legend__item" data-chart-legend-item="price">
+                    <span class="automation-chart-legend__swatch automation-chart-legend__swatch--price"></span>
+                    <span class="automation-chart-legend__label">Цена</span>
+                    <span
+                      class="automation-chart-legend__value"
+                      data-chart-legend-value="price"
+                    >—</span>
+                  </span>
+                  <span class="automation-chart-legend__item" data-chart-legend-item="mvrvz-btc">
+                    <span class="automation-chart-legend__swatch automation-chart-legend__swatch--btc"></span>
+                    <span class="automation-chart-legend__label">MVRVZ (BTC)</span>
+                    <span
+                      class="automation-chart-legend__value"
+                      data-chart-legend-value="mvrvz-btc"
+                    >—</span>
+                  </span>
+                  <span class="automation-chart-legend__item" data-chart-legend-item="mvrvz-eth">
+                    <span class="automation-chart-legend__swatch automation-chart-legend__swatch--eth"></span>
+                    <span class="automation-chart-legend__label">MVRVZ (ETH)</span>
+                    <span
+                      class="automation-chart-legend__value"
+                      data-chart-legend-value="mvrvz-eth"
+                    >—</span>
+                  </span>
+                </div>
+              </div>
+              <div class="automation-chart" data-chart-root></div>
+            </div>
             <div id="automation-history" class="mt-6 hidden">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <span class="text-xs uppercase tracking-wide text-muted">История сигналов</span>

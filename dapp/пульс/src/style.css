@@ -186,6 +186,42 @@
   .coin-summary__metric-value {
     @apply mt-2 break-words text-sm font-semibold text-text;
   }
+
+  .automation-chart {
+    @apply h-56 w-full rounded-2xl border border-grid/40 bg-surface/60;
+  }
+
+  .automation-chart-legend {
+    @apply flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-wide text-muted;
+  }
+
+  .automation-chart-legend__item {
+    @apply inline-flex items-center gap-2 rounded-full bg-surface/60 px-3 py-1;
+  }
+
+  .automation-chart-legend__swatch {
+    @apply inline-block h-2.5 w-2.5 rounded-full;
+  }
+
+  .automation-chart-legend__label {
+    @apply font-semibold;
+  }
+
+  .automation-chart-legend__value {
+    @apply font-semibold text-text;
+  }
+
+  .automation-chart-legend__swatch--price {
+    background-color: #f97316;
+  }
+
+  .automation-chart-legend__swatch--btc {
+    background-color: #6366f1;
+  }
+
+  .automation-chart-legend__swatch--eth {
+    background-color: #22d3ee;
+  }
 }
 
 @keyframes ticker-scroll {

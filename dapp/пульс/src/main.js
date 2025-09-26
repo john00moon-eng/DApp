@@ -67,6 +67,19 @@ const automationHistoryContainer = document.getElementById('automation-history')
 const automationHistoryList = document.getElementById('automation-history-list');
 const automationHistoryEmpty = document.getElementById('automation-history-empty');
 const automationHistoryClearButton = document.getElementById('automation-history-clear');
+const automationHistoryChartContainer = document.getElementById('automation-history-chart');
+const automationHistoryChartRoot = automationHistoryChartContainer
+  ? automationHistoryChartContainer.querySelector('[data-chart-root]')
+  : null;
+const automationHistoryLegendValuePrice = automationHistoryChartContainer
+  ? automationHistoryChartContainer.querySelector('[data-chart-legend-value="price"]')
+  : null;
+const automationHistoryLegendValueBtc = automationHistoryChartContainer
+  ? automationHistoryChartContainer.querySelector('[data-chart-legend-value="mvrvz-btc"]')
+  : null;
+const automationHistoryLegendValueEth = automationHistoryChartContainer
+  ? automationHistoryChartContainer.querySelector('[data-chart-legend-value="mvrvz-eth"]')
+  : null;
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const tickerContent = document.getElementById('ticker-content');
 
@@ -82,8 +95,21 @@ let tickerRefreshInProgress = false;
 let automationStatusTimerId = null;
 let automationStatusRefreshInProgress = false;
 let latestAutomationEvent = null;
+let automationHistoryChart = null;
+let automationHistoryChartResizeObserver = null;
+let automationHistoryChartResizeHandler = null;
+let automationHistoryChartSeries = {
+  price: null,
+  mvrvzBtc: null,
+  mvrvzEth: null
+};
 
 const AUTOMATION_HISTORY_STORAGE_KEY = 'pulse-automation-history-v1';
+const AUTOMATION_HISTORY_CHART_COLORS = {
+  price: '#F97316',
+  mvrvzBtc: '#6366F1',
+  mvrvzEth: '#22D3EE'
+};
 
 bindFaqAccordion();
 initAutomationStatus();
@@ -305,11 +331,12 @@ function saveAutomationHistory(history) {
 }
 
 function renderAutomationHistory(history) {
+  const entries = Array.isArray(history) ? history.filter(Boolean) : [];
+  updateAutomationHistoryChart(entries);
+
   if (!automationHistoryContainer || !automationHistoryList || !automationHistoryEmpty) {
     return;
   }
-
-  const entries = Array.isArray(history) ? history.filter(Boolean) : [];
 
   if (!entries.length) {
     automationHistoryContainer.classList.remove('hidden');
@@ -449,6 +476,253 @@ function renderAutomationHistory(history) {
   automationHistoryEmpty.classList.add('hidden');
   automationHistoryList.classList.remove('hidden');
   automationHistoryContainer.classList.remove('hidden');
+}
+
+function updateAutomationHistoryChart(entries) {
+  if (!automationHistoryChartContainer || !automationHistoryChartRoot) {
+    return;
+  }
+
+  const normalizedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
+
+  if (!normalizedEntries.length) {
+    automationHistoryChartContainer.classList.add('hidden');
+    destroyAutomationHistoryChart();
+    resetAutomationHistoryLegendValues();
+    return;
+  }
+
+  const pricePoints = [];
+  const btcPoints = [];
+  const ethPoints = [];
+
+  normalizedEntries.forEach((entry) => {
+    const timestamp = getHistoryPrimaryTimestamp(entry);
+    if (!timestamp) {
+      return;
+    }
+
+    const time = Math.floor(timestamp / 1000);
+
+    if (typeof entry.price === 'number' && Number.isFinite(entry.price)) {
+      const value = roundAutomationMetric(entry.price, 2);
+      if (value != null) {
+        pricePoints.push({ time, value });
+      }
+    }
+
+    if (typeof entry.mvrvzBtc === 'number' && Number.isFinite(entry.mvrvzBtc)) {
+      const value = roundAutomationMetric(entry.mvrvzBtc, 2);
+      if (value != null) {
+        btcPoints.push({ time, value });
+      }
+    }
+
+    if (typeof entry.mvrvzEth === 'number' && Number.isFinite(entry.mvrvzEth)) {
+      const value = roundAutomationMetric(entry.mvrvzEth, 2);
+      if (value != null) {
+        ethPoints.push({ time, value });
+      }
+    }
+  });
+
+  if (!pricePoints.length && !btcPoints.length && !ethPoints.length) {
+    automationHistoryChartContainer.classList.add('hidden');
+    destroyAutomationHistoryChart();
+    resetAutomationHistoryLegendValues();
+    return;
+  }
+
+  automationHistoryChartContainer.classList.remove('hidden');
+  ensureAutomationHistoryChart();
+
+  if (!automationHistoryChart || !automationHistoryChartSeries) {
+    return;
+  }
+
+  const sortedPricePoints = pricePoints.sort((a, b) => a.time - b.time);
+  const sortedBtcPoints = btcPoints.sort((a, b) => a.time - b.time);
+  const sortedEthPoints = ethPoints.sort((a, b) => a.time - b.time);
+
+  const priceSeries = automationHistoryChartSeries.price;
+  const btcSeries = automationHistoryChartSeries.mvrvzBtc;
+  const ethSeries = automationHistoryChartSeries.mvrvzEth;
+
+  if (priceSeries) {
+    priceSeries.setData(sortedPricePoints);
+    priceSeries.applyOptions({ visible: sortedPricePoints.length > 0 });
+  }
+
+  if (btcSeries) {
+    btcSeries.setData(sortedBtcPoints);
+    btcSeries.applyOptions({ visible: sortedBtcPoints.length > 0 });
+  }
+
+  if (ethSeries) {
+    ethSeries.setData(sortedEthPoints);
+    ethSeries.applyOptions({ visible: sortedEthPoints.length > 0 });
+  }
+
+  const latestValues = {
+    price: sortedPricePoints.length ? sortedPricePoints[sortedPricePoints.length - 1].value : null,
+    mvrvzBtc: sortedBtcPoints.length ? sortedBtcPoints[sortedBtcPoints.length - 1].value : null,
+    mvrvzEth: sortedEthPoints.length ? sortedEthPoints[sortedEthPoints.length - 1].value : null
+  };
+
+  updateAutomationHistoryLegendValues(latestValues);
+  automationHistoryChart.timeScale().fitContent();
+}
+
+function ensureAutomationHistoryChart() {
+  if (automationHistoryChart || !automationHistoryChartRoot) {
+    return;
+  }
+
+  const width = automationHistoryChartRoot.clientWidth || automationHistoryChartRoot.offsetWidth || 360;
+  const height = automationHistoryChartRoot.clientHeight || automationHistoryChartRoot.offsetHeight || 224;
+
+  automationHistoryChart = createChart(automationHistoryChartRoot, {
+    width,
+    height,
+    layout: {
+      background: { type: 'solid', color: 'transparent' },
+      textColor: '#E6E7ED',
+      fontFamily: 'Inter, system-ui, sans-serif'
+    },
+    grid: {
+      vertLines: { color: 'rgba(40, 44, 63, 0.45)' },
+      horzLines: { color: 'rgba(40, 44, 63, 0.45)' }
+    },
+    rightPriceScale: {
+      borderColor: 'rgba(40, 44, 63, 0.45)',
+      scaleMargins: { top: 0.2, bottom: 0.2 }
+    },
+    leftPriceScale: {
+      borderColor: 'rgba(40, 44, 63, 0.45)',
+      scaleMargins: { top: 0.2, bottom: 0.2 }
+    },
+    timeScale: {
+      borderColor: 'rgba(40, 44, 63, 0.45)',
+      timeVisible: true,
+      secondsVisible: false
+    },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+      vertLine: { color: 'rgba(255, 60, 120, 0.35)', labelBackgroundColor: '#FF3C78' },
+      horzLine: { color: 'rgba(255, 255, 255, 0.2)', labelBackgroundColor: '#3A3E59' }
+    }
+  });
+
+  automationHistoryChartSeries = {
+    price: automationHistoryChart.addLineSeries({
+      color: AUTOMATION_HISTORY_CHART_COLORS.price,
+      priceScaleId: 'right',
+      lineWidth: 2,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
+    }),
+    mvrvzBtc: automationHistoryChart.addLineSeries({
+      color: AUTOMATION_HISTORY_CHART_COLORS.mvrvzBtc,
+      priceScaleId: 'left',
+      lineWidth: 2,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
+    }),
+    mvrvzEth: automationHistoryChart.addLineSeries({
+      color: AUTOMATION_HISTORY_CHART_COLORS.mvrvzEth,
+      priceScaleId: 'left',
+      lineWidth: 2,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
+    })
+  };
+
+  if (typeof ResizeObserver !== 'undefined') {
+    automationHistoryChartResizeObserver = new ResizeObserver((entries) => {
+      if (!automationHistoryChart) {
+        return;
+      }
+
+      entries.forEach((entry) => {
+        const nextWidth = Math.floor(entry.contentRect.width);
+        const nextHeight = Math.floor(entry.contentRect.height);
+        if (nextWidth > 0 && nextHeight > 0) {
+          automationHistoryChart.resize(nextWidth, nextHeight);
+        }
+      });
+    });
+    automationHistoryChartResizeObserver.observe(automationHistoryChartRoot);
+  } else {
+    automationHistoryChartResizeHandler = () => {
+      if (!automationHistoryChart || !automationHistoryChartRoot) {
+        return;
+      }
+
+      const nextWidth = automationHistoryChartRoot.clientWidth || automationHistoryChartRoot.offsetWidth || width;
+      const nextHeight = automationHistoryChartRoot.clientHeight || automationHistoryChartRoot.offsetHeight || height;
+      automationHistoryChart.resize(nextWidth, nextHeight);
+    };
+
+    window.addEventListener('resize', automationHistoryChartResizeHandler);
+  }
+}
+
+function destroyAutomationHistoryChart() {
+  if (automationHistoryChartResizeObserver) {
+    automationHistoryChartResizeObserver.disconnect();
+    automationHistoryChartResizeObserver = null;
+  }
+
+  if (automationHistoryChartResizeHandler) {
+    window.removeEventListener('resize', automationHistoryChartResizeHandler);
+    automationHistoryChartResizeHandler = null;
+  }
+
+  if (automationHistoryChart) {
+    automationHistoryChart.remove();
+  }
+
+  automationHistoryChart = null;
+  automationHistoryChartSeries = {
+    price: null,
+    mvrvzBtc: null,
+    mvrvzEth: null
+  };
+}
+
+function updateAutomationHistoryLegendValues(values) {
+  if (!values) {
+    resetAutomationHistoryLegendValues();
+    return;
+  }
+
+  const { price = null, mvrvzBtc = null, mvrvzEth = null } = values;
+
+  if (automationHistoryLegendValuePrice) {
+    automationHistoryLegendValuePrice.textContent =
+      typeof price === 'number' ? formatAutomationPrice(price) : '—';
+  }
+
+  if (automationHistoryLegendValueBtc) {
+    automationHistoryLegendValueBtc.textContent =
+      typeof mvrvzBtc === 'number' ? formatAutomationRatio(mvrvzBtc) : '—';
+  }
+
+  if (automationHistoryLegendValueEth) {
+    automationHistoryLegendValueEth.textContent =
+      typeof mvrvzEth === 'number' ? formatAutomationRatio(mvrvzEth) : '—';
+  }
+}
+
+function resetAutomationHistoryLegendValues() {
+  if (automationHistoryLegendValuePrice) {
+    automationHistoryLegendValuePrice.textContent = '—';
+  }
+
+  if (automationHistoryLegendValueBtc) {
+    automationHistoryLegendValueBtc.textContent = '—';
+  }
+
+  if (automationHistoryLegendValueEth) {
+    automationHistoryLegendValueEth.textContent = '—';
+  }
 }
 
 function buildAutomationHistoryEntry(event) {
@@ -615,6 +889,7 @@ async function refreshAutomationStatus() {
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
       renderAutomationInsights(null);
+      renderAutomationHistory(loadAutomationHistory());
       return;
     }
 
@@ -636,6 +911,7 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationInsights(null);
+      renderAutomationHistory(loadAutomationHistory());
     }
 
     renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
@@ -1825,6 +2101,16 @@ function formatTitleCase(text) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(' ');
+}
+
+function roundAutomationMetric(value, precision = 2) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const safePrecision = Number.isFinite(precision) && precision >= 0 ? Math.floor(precision) : 0;
+  const factor = 10 ** safePrecision;
+  return Math.round(value * factor) / factor;
 }
 
 function formatAutomationPrice(value) {
