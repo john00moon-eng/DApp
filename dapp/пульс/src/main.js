@@ -59,6 +59,10 @@ const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-tim
 const automationStatusContainer = document.getElementById('automation-status');
 const automationStatusBadge = document.getElementById('automation-status-badge');
 const automationPortIndicator = document.getElementById('automation-port-indicator');
+const automationInsightsContainer = document.getElementById('automation-insights');
+const automationInsightsMessage = document.getElementById('automation-insights-message');
+const automationInsightsTimestamp = document.getElementById('automation-insights-timestamp');
+const automationInsightsGrid = document.getElementById('automation-insights-grid');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const tickerContent = document.getElementById('ticker-content');
 
@@ -198,6 +202,7 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+      renderAutomationInsights(null);
       return;
     }
 
@@ -211,6 +216,7 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+      renderAutomationInsights(null);
       return;
     }
 
@@ -226,9 +232,11 @@ async function refreshAutomationStatus() {
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
       latestAutomationEvent = payload;
       renderAutomationStatus(payload);
+      renderAutomationInsights(payload);
     } else {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+      renderAutomationInsights(null);
     }
 
     renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
@@ -236,6 +244,7 @@ async function refreshAutomationStatus() {
     console.error('Не удалось получить статус автоматизаций', error);
     latestAutomationEvent = null;
     renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
+    renderAutomationInsights(null);
     renderAutomationPortStatus(automationWebhookPort, {
       statusLabel: 'недоступен',
       isError: true
@@ -1004,6 +1013,435 @@ function renderAutomationStatus(event, options = {}) {
   }
 
   refreshActiveSignalAutomationSummary();
+}
+
+function renderAutomationInsights(event) {
+  if (
+    !automationInsightsContainer ||
+    !automationInsightsGrid ||
+    !automationInsightsMessage ||
+    !automationInsightsTimestamp
+  ) {
+    return;
+  }
+
+  const payload = extractAutomationPayload(event);
+
+  if (!payload) {
+    automationInsightsContainer.classList.add('hidden');
+    automationInsightsMessage.textContent = '';
+    automationInsightsMessage.classList.add('hidden');
+    automationInsightsTimestamp.textContent = '';
+    automationInsightsTimestamp.classList.add('hidden');
+    automationInsightsGrid.innerHTML = '';
+    automationInsightsGrid.classList.add('hidden');
+    return;
+  }
+
+  const message = getAutomationPayloadMessage(event, payload);
+  const timestampParts = getAutomationPayloadTimestamps(event, payload);
+  const metrics = buildAutomationInsightsMetrics(payload);
+
+  if (!message && !timestampParts.length && !metrics.length) {
+    automationInsightsContainer.classList.add('hidden');
+    automationInsightsMessage.textContent = '';
+    automationInsightsMessage.classList.add('hidden');
+    automationInsightsTimestamp.textContent = '';
+    automationInsightsTimestamp.classList.add('hidden');
+    automationInsightsGrid.innerHTML = '';
+    automationInsightsGrid.classList.add('hidden');
+    return;
+  }
+
+  automationInsightsContainer.classList.remove('hidden');
+
+  if (message) {
+    automationInsightsMessage.textContent = message;
+    automationInsightsMessage.classList.remove('hidden');
+  } else {
+    automationInsightsMessage.textContent = '';
+    automationInsightsMessage.classList.add('hidden');
+  }
+
+  if (timestampParts.length) {
+    automationInsightsTimestamp.textContent = timestampParts.join(' • ');
+    automationInsightsTimestamp.classList.remove('hidden');
+  } else {
+    automationInsightsTimestamp.textContent = '';
+    automationInsightsTimestamp.classList.add('hidden');
+  }
+
+  automationInsightsGrid.innerHTML = '';
+
+  if (metrics.length) {
+    metrics.forEach((metric) => {
+      const item = document.createElement('div');
+      item.className = 'rounded-xl bg-surface/80 p-4';
+
+      const label = document.createElement('div');
+      label.className = 'text-[11px] uppercase tracking-wide text-muted';
+      label.textContent = metric.label;
+
+      const value = document.createElement('div');
+      value.className = 'mt-2 text-sm font-semibold text-text';
+      value.textContent = metric.value;
+
+      item.append(label, value);
+      automationInsightsGrid.append(item);
+    });
+    automationInsightsGrid.classList.remove('hidden');
+  } else {
+    automationInsightsGrid.classList.add('hidden');
+  }
+}
+
+function extractAutomationPayload(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const seen = new Set();
+  const queue = [];
+
+  const enqueue = (candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      return;
+    }
+
+    if (seen.has(candidate)) {
+      return;
+    }
+
+    seen.add(candidate);
+    queue.push(candidate);
+  };
+
+  enqueue(event.payload?.data);
+  enqueue(event.payload?.body);
+  enqueue(event.payload?.payload);
+  enqueue(event.payload);
+  enqueue(event.data);
+  enqueue(event.eventData);
+  enqueue(event.record);
+  enqueue(event);
+
+  while (queue.length) {
+    const candidate = queue.shift();
+    if (hasAutomationInsightFields(candidate)) {
+      return candidate;
+    }
+
+    for (const value of Object.values(candidate)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        enqueue(value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function hasAutomationInsightFields(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    return false;
+  }
+
+  const keys = Object.keys(candidate);
+  if (!keys.length) {
+    return false;
+  }
+
+  return keys.some((key) => {
+    const normalized = normalizeKey(key);
+    return (
+      normalized.includes('mvrvz') ||
+      normalized.includes('price') ||
+      normalized.includes('ticker') ||
+      normalized.includes('symbol') ||
+      normalized.includes('timeframe') ||
+      normalized.includes('condition') ||
+      normalized.includes('message')
+    );
+  });
+}
+
+function getAutomationPayloadMessage(event, payload) {
+  const candidates = [
+    resolvePayloadValue(payload, [
+      'payload_alert_message',
+      'payload message',
+      'message',
+      'alert_message',
+      'summary',
+      'title'
+    ]),
+    getAutomationEventSummary(event),
+    typeof event?.event === 'string' ? event.event : null
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return '';
+}
+
+function getAutomationPayloadTimestamps(event, payload) {
+  const triggered = resolvePayloadDate(payload, [
+    'triggered_at',
+    'triggeredAt',
+    'event_time',
+    'time'
+  ]) || (event?.triggeredAt ? new Date(event.triggeredAt) : null);
+
+  const received = resolvePayloadDate(payload, [
+    'received_at',
+    'receivedAt',
+    'updated_at',
+    'updatedAt'
+  ]) || (event?.receivedAt ? new Date(event.receivedAt) : null);
+
+  const parts = [];
+
+  if (triggered instanceof Date && !Number.isNaN(triggered.getTime())) {
+    parts.push(`Триггер: ${formatDateTime(triggered.toISOString())} (${formatRelative(triggered.toISOString())})`);
+  }
+
+  if (received instanceof Date && !Number.isNaN(received.getTime())) {
+    parts.push(`Получено: ${formatDateTime(received.toISOString())} (${formatRelative(received.toISOString())})`);
+  }
+
+  return parts;
+}
+
+function buildAutomationInsightsMetrics(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const metrics = [];
+
+  const pair = coerceString(
+    resolvePayloadValue(payload, ['ticker', 'symbol', 'pair', 'market_pair'])
+  );
+  if (pair) {
+    metrics.push({ label: 'Пара', value: pair.toUpperCase() });
+  }
+
+  const exchange = coerceString(resolvePayloadValue(payload, ['exchange', 'market', 'venue']));
+  if (exchange) {
+    metrics.push({ label: 'Биржа', value: exchange });
+  }
+
+  const timeframe = coerceString(resolvePayloadValue(payload, ['timeframe', 'interval', 'resolution']));
+  if (timeframe) {
+    metrics.push({ label: 'Таймфрейм', value: timeframe.toUpperCase() });
+  }
+
+  const condition = coerceString(resolvePayloadValue(payload, ['condition', 'rule', 'direction']));
+  if (condition) {
+    metrics.push({ label: 'Условие', value: formatTitleCase(condition) });
+  }
+
+  const price = coerceNumber(resolvePayloadValue(payload, ['price', 'close', 'last_price']));
+  if (price != null) {
+    metrics.push({ label: 'Цена отчёта', value: formatAutomationPrice(price) });
+  }
+
+  const mvrvzBtc = coerceNumber(resolvePayloadValue(payload, ['mvrvz_btc', 'mvrvzbtc', 'mvrvz_btc_value']));
+  if (mvrvzBtc != null) {
+    metrics.push({ label: 'MVRVZ (BTC)', value: formatAutomationRatio(mvrvzBtc) });
+  }
+
+  const mvrvzEth = coerceNumber(resolvePayloadValue(payload, ['mvrvz_eth', 'mvrvzeth', 'mvrvz_eth_value']));
+  if (mvrvzEth != null) {
+    metrics.push({ label: 'MVRVZ (ETH)', value: formatAutomationRatio(mvrvzEth) });
+  }
+
+  const source = coerceString(resolvePayloadValue(payload, ['source', 'origin', 'channel']));
+  if (source) {
+    metrics.push({ label: 'Источник', value: formatTitleCase(source) });
+  }
+
+  const ok = coerceBoolean(resolvePayloadValue(payload, ['ok', 'status']));
+  if (ok != null) {
+    metrics.push({ label: 'Статус', value: ok ? 'OK' : 'Ошибка' });
+  }
+
+  const sent = coerceBoolean(resolvePayloadValue(payload, ['sent', 'delivered', 'forwarded']));
+  if (sent != null) {
+    metrics.push({ label: 'Отправлено', value: sent ? 'Да' : 'Нет' });
+  }
+
+  return metrics;
+}
+
+function resolvePayloadValue(payload, keys) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(keys)) {
+    return undefined;
+  }
+
+  const normalizedEntries = new Map();
+
+  for (const [rawKey, value] of Object.entries(payload)) {
+    const normalized = normalizeKey(rawKey);
+    if (!normalizedEntries.has(normalized)) {
+      normalizedEntries.set(normalized, value);
+    }
+  }
+
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      const value = payload[key];
+      if (value !== undefined) {
+        return value;
+      }
+    }
+
+    const normalizedKey = normalizeKey(key);
+    if (normalizedEntries.has(normalizedKey)) {
+      const value = normalizedEntries.get(normalizedKey);
+      if (value !== undefined) {
+        return value;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function resolvePayloadDate(payload, keys) {
+  const value = resolvePayloadValue(payload, keys);
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const fromNumber = new Date(value);
+    return Number.isNaN(fromNumber.getTime()) ? null : fromNumber;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    if (!Number.isNaN(numeric) && String(numeric).length >= 10) {
+      const fromNumeric = new Date(numeric);
+      if (!Number.isNaN(fromNumeric.getTime())) {
+        return fromNumeric;
+      }
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  return null;
+}
+
+function normalizeKey(key) {
+  return String(key ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+function coerceString(value) {
+  if (value == null) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+
+  return '';
+}
+
+function coerceNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.replace(/[^0-9.,-]/g, '').replace(',', '.');
+    const parsed = Number.parseFloat(normalized);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function coerceBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value !== 0;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (['true', 'yes', 'on', '1', 'ok', 'sent', 'success'].includes(normalized)) {
+      return true;
+    }
+
+    if (['false', 'no', 'off', '0', 'error', 'failed'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function formatTitleCase(text) {
+  if (!text) {
+    return '';
+  }
+
+  return text
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function formatAutomationPrice(value) {
+  try {
+    return new Intl.NumberFormat('ru-RU', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} USD`;
+  }
+}
+
+function formatAutomationRatio(value) {
+  return value.toFixed(2);
 }
 
 function resolveAutomationEndpointPort(source) {
