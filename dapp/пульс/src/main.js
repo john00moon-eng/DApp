@@ -59,6 +59,14 @@ const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-tim
 const automationStatusContainer = document.getElementById('automation-status');
 const automationStatusBadge = document.getElementById('automation-status-badge');
 const automationPortIndicator = document.getElementById('automation-port-indicator');
+const automationInsightsContainer = document.getElementById('automation-insights');
+const automationInsightsMessage = document.getElementById('automation-insights-message');
+const automationInsightsTimestamp = document.getElementById('automation-insights-timestamp');
+const automationInsightsGrid = document.getElementById('automation-insights-grid');
+const automationHistoryContainer = document.getElementById('automation-history');
+const automationHistoryList = document.getElementById('automation-history-list');
+const automationHistoryEmpty = document.getElementById('automation-history-empty');
+const automationHistoryClearButton = document.getElementById('automation-history-clear');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const tickerContent = document.getElementById('ticker-content');
 
@@ -75,8 +83,11 @@ let automationStatusTimerId = null;
 let automationStatusRefreshInProgress = false;
 let latestAutomationEvent = null;
 
+const AUTOMATION_HISTORY_STORAGE_KEY = 'pulse-automation-history-v1';
+
 bindFaqAccordion();
 initAutomationStatus();
+initAutomationHistory();
 
 if (chartContainer && signalsList && detailsContainer) {
   initialiseDashboard().catch((error) => {
@@ -176,6 +187,396 @@ function scheduleAutomationStatusRefresh() {
   }, AUTOMATION_STATUS_REFRESH_INTERVAL);
 }
 
+function initAutomationHistory() {
+  if (automationHistoryClearButton) {
+    automationHistoryClearButton.addEventListener('click', () => {
+      saveAutomationHistory([]);
+      renderAutomationHistory([]);
+    });
+  }
+
+  hydrateAutomationHistory();
+}
+
+function hydrateAutomationHistory() {
+  if (!automationHistoryContainer || !automationHistoryList || !automationHistoryEmpty) {
+    return;
+  }
+
+  const history = loadAutomationHistory();
+  renderAutomationHistory(history);
+}
+
+function persistAutomationHistory(event) {
+  if (
+    !automationHistoryContainer ||
+    !automationHistoryList ||
+    !automationHistoryEmpty ||
+    !event ||
+    typeof event !== 'object'
+  ) {
+    return;
+  }
+
+  const entry = buildAutomationHistoryEntry(event);
+  if (!entry) {
+    return;
+  }
+
+  const history = loadAutomationHistory();
+  const nextHistory = Array.isArray(history) ? [...history] : [];
+  const existingIndex = nextHistory.findIndex((item) => item && item.id === entry.id);
+
+  if (existingIndex >= 0) {
+    nextHistory.splice(existingIndex, 1, entry);
+  } else {
+    nextHistory.push(entry);
+  }
+
+  nextHistory.sort((a, b) => {
+    const aTime = getHistoryPrimaryTimestamp(a);
+    const bTime = getHistoryPrimaryTimestamp(b);
+    return bTime - aTime;
+  });
+
+  saveAutomationHistory(nextHistory);
+  renderAutomationHistory(nextHistory);
+}
+
+function loadAutomationHistory() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(AUTOMATION_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((item) => (typeof item === 'object' && item ? item : null))
+      .filter(Boolean)
+      .map((item) => ({
+        id: item.id,
+        day: item.day,
+        triggeredAt: item.triggeredAt,
+        receivedAt: item.receivedAt,
+        message: item.message,
+        pair: item.pair,
+        exchange: item.exchange,
+        timeframe: item.timeframe,
+        condition: item.condition,
+        price: typeof item.price === 'number' ? item.price : null,
+        mvrvzBtc: typeof item.mvrvzBtc === 'number' ? item.mvrvzBtc : null,
+        mvrvzEth: typeof item.mvrvzEth === 'number' ? item.mvrvzEth : null,
+        source: item.source,
+        ok: typeof item.ok === 'boolean' ? item.ok : null,
+        sent: typeof item.sent === 'boolean' ? item.sent : null,
+        signalId: item.signalId,
+        createdAt: item.createdAt
+      }));
+  } catch (error) {
+    console.warn('Не удалось загрузить историю webhook сигналов', error);
+    return [];
+  }
+}
+
+function saveAutomationHistory(history) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  try {
+    if (!Array.isArray(history) || history.length === 0) {
+      window.localStorage.removeItem(AUTOMATION_HISTORY_STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(AUTOMATION_HISTORY_STORAGE_KEY, JSON.stringify(history));
+  } catch (error) {
+    console.warn('Не удалось сохранить историю webhook сигналов', error);
+  }
+}
+
+function renderAutomationHistory(history) {
+  if (!automationHistoryContainer || !automationHistoryList || !automationHistoryEmpty) {
+    return;
+  }
+
+  const entries = Array.isArray(history) ? history.filter(Boolean) : [];
+
+  if (!entries.length) {
+    automationHistoryContainer.classList.remove('hidden');
+    automationHistoryList.innerHTML = '';
+    automationHistoryList.classList.add('hidden');
+    automationHistoryEmpty.classList.remove('hidden');
+    return;
+  }
+
+  const groups = new Map();
+
+  entries.forEach((entry) => {
+    const dayKey = typeof entry.day === 'string' && entry.day ? entry.day : 'unknown';
+    if (!groups.has(dayKey)) {
+      groups.set(dayKey, []);
+    }
+    groups.get(dayKey).push(entry);
+  });
+
+  const sortedDays = Array.from(groups.keys()).sort((a, b) => {
+    const aTime = resolveHistoryDaySortValue(a);
+    const bTime = resolveHistoryDaySortValue(b);
+    return bTime - aTime;
+  });
+
+  automationHistoryList.innerHTML = '';
+
+  sortedDays.forEach((dayKey) => {
+    const dayEntries = groups.get(dayKey) || [];
+    dayEntries.sort((a, b) => getHistoryPrimaryTimestamp(b) - getHistoryPrimaryTimestamp(a));
+
+    const block = document.createElement('div');
+    block.className = 'rounded-xl border border-grid/40 bg-surface/70 p-4';
+
+    const header = document.createElement('div');
+    header.className = 'flex flex-wrap items-center justify-between gap-2';
+
+    const dayLabel = document.createElement('div');
+    dayLabel.className = 'text-sm font-semibold text-text';
+    dayLabel.textContent = formatHistoryDayLabel(dayKey);
+
+    const dayCount = document.createElement('div');
+    dayCount.className = 'text-[11px] uppercase tracking-wide text-muted';
+    dayCount.textContent = `Сигналов: ${dayEntries.length}`;
+
+    header.append(dayLabel, dayCount);
+
+    const list = document.createElement('div');
+    list.className = 'mt-3 space-y-3';
+
+    dayEntries.forEach((entry) => {
+      const item = document.createElement('div');
+      item.className = 'rounded-lg border border-grid/40 bg-surface/60 p-3';
+
+      const title = document.createElement('div');
+      title.className = 'text-sm font-semibold text-text';
+      title.textContent = entry.message || 'Webhook сигнал';
+
+      const metaParts = [];
+      if (entry.pair) {
+        metaParts.push(entry.pair);
+      }
+      if (entry.exchange) {
+        metaParts.push(entry.exchange);
+      }
+      if (entry.timeframe) {
+        metaParts.push(entry.timeframe);
+      }
+      if (entry.condition) {
+        metaParts.push(formatTitleCase(entry.condition));
+      }
+      const timestamp = getHistoryTimestampLabel(entry);
+      if (timestamp) {
+        metaParts.push(timestamp);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'mt-2 text-[11px] uppercase tracking-wide text-muted';
+      meta.textContent = metaParts.join(' • ');
+
+      const detailsLine = document.createElement('div');
+      detailsLine.className = 'mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted';
+
+      if (typeof entry.price === 'number') {
+        const priceBadge = document.createElement('span');
+        priceBadge.textContent = `Цена: ${formatAutomationPrice(entry.price)}`;
+        detailsLine.append(priceBadge);
+      }
+
+      if (typeof entry.mvrvzBtc === 'number') {
+        const btcBadge = document.createElement('span');
+        btcBadge.textContent = `MVRVZ (BTC): ${formatAutomationRatio(entry.mvrvzBtc)}`;
+        detailsLine.append(btcBadge);
+      }
+
+      if (typeof entry.mvrvzEth === 'number') {
+        const ethBadge = document.createElement('span');
+        ethBadge.textContent = `MVRVZ (ETH): ${formatAutomationRatio(entry.mvrvzEth)}`;
+        detailsLine.append(ethBadge);
+      }
+
+      if (entry.source) {
+        const sourceBadge = document.createElement('span');
+        sourceBadge.textContent = `Источник: ${formatTitleCase(entry.source)}`;
+        detailsLine.append(sourceBadge);
+      }
+
+      if (typeof entry.ok === 'boolean') {
+        const statusBadge = document.createElement('span');
+        statusBadge.textContent = `Статус: ${entry.ok ? 'OK' : 'Ошибка'}`;
+        detailsLine.append(statusBadge);
+      }
+
+      if (typeof entry.sent === 'boolean') {
+        const sentBadge = document.createElement('span');
+        sentBadge.textContent = `Отправлено: ${entry.sent ? 'Да' : 'Нет'}`;
+        detailsLine.append(sentBadge);
+      }
+
+      item.append(title);
+
+      if (metaParts.length) {
+        item.append(meta);
+      }
+
+      if (detailsLine.childElementCount > 0) {
+        item.append(detailsLine);
+      }
+
+      list.append(item);
+    });
+
+    block.append(header, list);
+    automationHistoryList.append(block);
+  });
+
+  automationHistoryEmpty.classList.add('hidden');
+  automationHistoryList.classList.remove('hidden');
+  automationHistoryContainer.classList.remove('hidden');
+}
+
+function buildAutomationHistoryEntry(event) {
+  const payload = extractAutomationPayload(event);
+  if (!payload) {
+    return null;
+  }
+
+  const triggeredDate =
+    resolvePayloadDate(payload, ['triggered_at', 'triggeredAt', 'event_time', 'time']) ||
+    (event?.triggeredAt ? new Date(event.triggeredAt) : null);
+  const receivedDate =
+    resolvePayloadDate(payload, ['received_at', 'receivedAt', 'updated_at', 'updatedAt']) ||
+    (event?.receivedAt ? new Date(event.receivedAt) : null);
+
+  const triggeredAt = triggeredDate instanceof Date && !Number.isNaN(triggeredDate.getTime())
+    ? triggeredDate.toISOString()
+    : null;
+  const receivedAt = receivedDate instanceof Date && !Number.isNaN(receivedDate.getTime())
+    ? receivedDate.toISOString()
+    : null;
+
+  const message = getAutomationPayloadMessage(event, payload);
+  const pair = coerceString(resolvePayloadValue(payload, ['ticker', 'symbol', 'pair', 'market_pair'])).toUpperCase();
+  const exchange = coerceString(resolvePayloadValue(payload, ['exchange', 'market', 'venue']));
+  const timeframe = coerceString(resolvePayloadValue(payload, ['timeframe', 'interval', 'resolution'])).toUpperCase();
+  const condition = coerceString(resolvePayloadValue(payload, ['condition', 'rule', 'direction']));
+  const price = coerceNumber(resolvePayloadValue(payload, ['price', 'close', 'last_price']));
+  const mvrvzBtc = coerceNumber(resolvePayloadValue(payload, ['mvrvz_btc', 'mvrvzbtc', 'mvrvz_btc_value']));
+  const mvrvzEth = coerceNumber(resolvePayloadValue(payload, ['mvrvz_eth', 'mvrvzeth', 'mvrvz_eth_value']));
+  const source = coerceString(resolvePayloadValue(payload, ['source', 'origin', 'channel']));
+  const ok = coerceBoolean(resolvePayloadValue(payload, ['ok', 'status']));
+  const sent = coerceBoolean(resolvePayloadValue(payload, ['sent', 'delivered', 'forwarded']));
+  const signalId = extractAutomationSignalId(event);
+
+  const dayKey = triggeredAt?.slice(0, 10) || receivedAt?.slice(0, 10) || null;
+  const normalizedMessage = normalizeKey(message).slice(0, 32);
+  const normalizedPair = normalizeKey(pair).slice(0, 16);
+  const timestampForId = triggeredAt || receivedAt || new Date().toISOString();
+  const uniqueSeed = [dayKey, normalizedPair, normalizedMessage, timestampForId]
+    .filter(Boolean)
+    .join('-');
+  const id = uniqueSeed || `event-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+  return {
+    id,
+    day: dayKey,
+    triggeredAt,
+    receivedAt,
+    message,
+    pair: pair || null,
+    exchange: exchange || null,
+    timeframe: timeframe || null,
+    condition: condition || null,
+    price: typeof price === 'number' ? price : null,
+    mvrvzBtc: typeof mvrvzBtc === 'number' ? mvrvzBtc : null,
+    mvrvzEth: typeof mvrvzEth === 'number' ? mvrvzEth : null,
+    source: source || null,
+    ok: typeof ok === 'boolean' ? ok : null,
+    sent: typeof sent === 'boolean' ? sent : null,
+    signalId: signalId || null,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function getHistoryPrimaryTimestamp(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return 0;
+  }
+
+  const candidates = [entry.triggeredAt, entry.receivedAt, entry.createdAt];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const time = new Date(candidate).getTime();
+    if (!Number.isNaN(time)) {
+      return time;
+    }
+  }
+
+  return 0;
+}
+
+function resolveHistoryDaySortValue(dayKey) {
+  if (!dayKey || dayKey === 'unknown') {
+    return -Infinity;
+  }
+
+  const time = new Date(`${dayKey}T00:00:00Z`).getTime();
+  return Number.isNaN(time) ? -Infinity : time;
+}
+
+function formatHistoryDayLabel(dayKey) {
+  if (!dayKey || dayKey === 'unknown') {
+    return 'Без даты';
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat('ru-RU', {
+      year: 'numeric',
+      month: 'long',
+      day: '2-digit'
+    });
+    return formatter.format(new Date(`${dayKey}T00:00:00Z`));
+  } catch (error) {
+    return dayKey;
+  }
+}
+
+function getHistoryTimestampLabel(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  const timestamp = entry.triggeredAt || entry.receivedAt || entry.createdAt;
+  if (!timestamp) {
+    return '';
+  }
+
+  try {
+    return new Intl.DateTimeFormat('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(new Date(timestamp));
+  } catch (error) {
+    return '';
+  }
+}
+
 async function refreshAutomationStatus() {
   if (automationStatusRefreshInProgress) {
     return;
@@ -198,6 +599,8 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+      renderAutomationInsights(null);
+      renderAutomationHistory(loadAutomationHistory());
       return;
     }
 
@@ -211,6 +614,7 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+      renderAutomationInsights(null);
       return;
     }
 
@@ -225,10 +629,13 @@ async function refreshAutomationStatus() {
 
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
       latestAutomationEvent = payload;
+      persistAutomationHistory(payload);
       renderAutomationStatus(payload);
+      renderAutomationInsights(payload);
     } else {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
+      renderAutomationInsights(null);
     }
 
     renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
@@ -236,10 +643,12 @@ async function refreshAutomationStatus() {
     console.error('Не удалось получить статус автоматизаций', error);
     latestAutomationEvent = null;
     renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
+    renderAutomationInsights(null);
     renderAutomationPortStatus(automationWebhookPort, {
       statusLabel: 'недоступен',
       isError: true
     });
+    renderAutomationHistory(loadAutomationHistory());
   } finally {
     automationStatusRefreshInProgress = false;
   }
@@ -1004,6 +1413,435 @@ function renderAutomationStatus(event, options = {}) {
   }
 
   refreshActiveSignalAutomationSummary();
+}
+
+function renderAutomationInsights(event) {
+  if (
+    !automationInsightsContainer ||
+    !automationInsightsGrid ||
+    !automationInsightsMessage ||
+    !automationInsightsTimestamp
+  ) {
+    return;
+  }
+
+  const payload = extractAutomationPayload(event);
+
+  if (!payload) {
+    automationInsightsContainer.classList.add('hidden');
+    automationInsightsMessage.textContent = '';
+    automationInsightsMessage.classList.add('hidden');
+    automationInsightsTimestamp.textContent = '';
+    automationInsightsTimestamp.classList.add('hidden');
+    automationInsightsGrid.innerHTML = '';
+    automationInsightsGrid.classList.add('hidden');
+    return;
+  }
+
+  const message = getAutomationPayloadMessage(event, payload);
+  const timestampParts = getAutomationPayloadTimestamps(event, payload);
+  const metrics = buildAutomationInsightsMetrics(payload);
+
+  if (!message && !timestampParts.length && !metrics.length) {
+    automationInsightsContainer.classList.add('hidden');
+    automationInsightsMessage.textContent = '';
+    automationInsightsMessage.classList.add('hidden');
+    automationInsightsTimestamp.textContent = '';
+    automationInsightsTimestamp.classList.add('hidden');
+    automationInsightsGrid.innerHTML = '';
+    automationInsightsGrid.classList.add('hidden');
+    return;
+  }
+
+  automationInsightsContainer.classList.remove('hidden');
+
+  if (message) {
+    automationInsightsMessage.textContent = message;
+    automationInsightsMessage.classList.remove('hidden');
+  } else {
+    automationInsightsMessage.textContent = '';
+    automationInsightsMessage.classList.add('hidden');
+  }
+
+  if (timestampParts.length) {
+    automationInsightsTimestamp.textContent = timestampParts.join(' • ');
+    automationInsightsTimestamp.classList.remove('hidden');
+  } else {
+    automationInsightsTimestamp.textContent = '';
+    automationInsightsTimestamp.classList.add('hidden');
+  }
+
+  automationInsightsGrid.innerHTML = '';
+
+  if (metrics.length) {
+    metrics.forEach((metric) => {
+      const item = document.createElement('div');
+      item.className = 'rounded-xl bg-surface/80 p-4';
+
+      const label = document.createElement('div');
+      label.className = 'text-[11px] uppercase tracking-wide text-muted';
+      label.textContent = metric.label;
+
+      const value = document.createElement('div');
+      value.className = 'mt-2 text-sm font-semibold text-text';
+      value.textContent = metric.value;
+
+      item.append(label, value);
+      automationInsightsGrid.append(item);
+    });
+    automationInsightsGrid.classList.remove('hidden');
+  } else {
+    automationInsightsGrid.classList.add('hidden');
+  }
+}
+
+function extractAutomationPayload(event) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+
+  const seen = new Set();
+  const queue = [];
+
+  const enqueue = (candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      return;
+    }
+
+    if (seen.has(candidate)) {
+      return;
+    }
+
+    seen.add(candidate);
+    queue.push(candidate);
+  };
+
+  enqueue(event.payload?.data);
+  enqueue(event.payload?.body);
+  enqueue(event.payload?.payload);
+  enqueue(event.payload);
+  enqueue(event.data);
+  enqueue(event.eventData);
+  enqueue(event.record);
+  enqueue(event);
+
+  while (queue.length) {
+    const candidate = queue.shift();
+    if (hasAutomationInsightFields(candidate)) {
+      return candidate;
+    }
+
+    for (const value of Object.values(candidate)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        enqueue(value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function hasAutomationInsightFields(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    return false;
+  }
+
+  const keys = Object.keys(candidate);
+  if (!keys.length) {
+    return false;
+  }
+
+  return keys.some((key) => {
+    const normalized = normalizeKey(key);
+    return (
+      normalized.includes('mvrvz') ||
+      normalized.includes('price') ||
+      normalized.includes('ticker') ||
+      normalized.includes('symbol') ||
+      normalized.includes('timeframe') ||
+      normalized.includes('condition') ||
+      normalized.includes('message')
+    );
+  });
+}
+
+function getAutomationPayloadMessage(event, payload) {
+  const candidates = [
+    resolvePayloadValue(payload, [
+      'payload_alert_message',
+      'payload message',
+      'message',
+      'alert_message',
+      'summary',
+      'title'
+    ]),
+    getAutomationEventSummary(event),
+    typeof event?.event === 'string' ? event.event : null
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return '';
+}
+
+function getAutomationPayloadTimestamps(event, payload) {
+  const triggered = resolvePayloadDate(payload, [
+    'triggered_at',
+    'triggeredAt',
+    'event_time',
+    'time'
+  ]) || (event?.triggeredAt ? new Date(event.triggeredAt) : null);
+
+  const received = resolvePayloadDate(payload, [
+    'received_at',
+    'receivedAt',
+    'updated_at',
+    'updatedAt'
+  ]) || (event?.receivedAt ? new Date(event.receivedAt) : null);
+
+  const parts = [];
+
+  if (triggered instanceof Date && !Number.isNaN(triggered.getTime())) {
+    parts.push(`Триггер: ${formatDateTime(triggered.toISOString())} (${formatRelative(triggered.toISOString())})`);
+  }
+
+  if (received instanceof Date && !Number.isNaN(received.getTime())) {
+    parts.push(`Получено: ${formatDateTime(received.toISOString())} (${formatRelative(received.toISOString())})`);
+  }
+
+  return parts;
+}
+
+function buildAutomationInsightsMetrics(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const metrics = [];
+
+  const pair = coerceString(
+    resolvePayloadValue(payload, ['ticker', 'symbol', 'pair', 'market_pair'])
+  );
+  if (pair) {
+    metrics.push({ label: 'Пара', value: pair.toUpperCase() });
+  }
+
+  const exchange = coerceString(resolvePayloadValue(payload, ['exchange', 'market', 'venue']));
+  if (exchange) {
+    metrics.push({ label: 'Биржа', value: exchange });
+  }
+
+  const timeframe = coerceString(resolvePayloadValue(payload, ['timeframe', 'interval', 'resolution']));
+  if (timeframe) {
+    metrics.push({ label: 'Таймфрейм', value: timeframe.toUpperCase() });
+  }
+
+  const condition = coerceString(resolvePayloadValue(payload, ['condition', 'rule', 'direction']));
+  if (condition) {
+    metrics.push({ label: 'Условие', value: formatTitleCase(condition) });
+  }
+
+  const price = coerceNumber(resolvePayloadValue(payload, ['price', 'close', 'last_price']));
+  if (price != null) {
+    metrics.push({ label: 'Цена отчёта', value: formatAutomationPrice(price) });
+  }
+
+  const mvrvzBtc = coerceNumber(resolvePayloadValue(payload, ['mvrvz_btc', 'mvrvzbtc', 'mvrvz_btc_value']));
+  if (mvrvzBtc != null) {
+    metrics.push({ label: 'MVRVZ (BTC)', value: formatAutomationRatio(mvrvzBtc) });
+  }
+
+  const mvrvzEth = coerceNumber(resolvePayloadValue(payload, ['mvrvz_eth', 'mvrvzeth', 'mvrvz_eth_value']));
+  if (mvrvzEth != null) {
+    metrics.push({ label: 'MVRVZ (ETH)', value: formatAutomationRatio(mvrvzEth) });
+  }
+
+  const source = coerceString(resolvePayloadValue(payload, ['source', 'origin', 'channel']));
+  if (source) {
+    metrics.push({ label: 'Источник', value: formatTitleCase(source) });
+  }
+
+  const ok = coerceBoolean(resolvePayloadValue(payload, ['ok', 'status']));
+  if (ok != null) {
+    metrics.push({ label: 'Статус', value: ok ? 'OK' : 'Ошибка' });
+  }
+
+  const sent = coerceBoolean(resolvePayloadValue(payload, ['sent', 'delivered', 'forwarded']));
+  if (sent != null) {
+    metrics.push({ label: 'Отправлено', value: sent ? 'Да' : 'Нет' });
+  }
+
+  return metrics;
+}
+
+function resolvePayloadValue(payload, keys) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(keys)) {
+    return undefined;
+  }
+
+  const normalizedEntries = new Map();
+
+  for (const [rawKey, value] of Object.entries(payload)) {
+    const normalized = normalizeKey(rawKey);
+    if (!normalizedEntries.has(normalized)) {
+      normalizedEntries.set(normalized, value);
+    }
+  }
+
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      const value = payload[key];
+      if (value !== undefined) {
+        return value;
+      }
+    }
+
+    const normalizedKey = normalizeKey(key);
+    if (normalizedEntries.has(normalizedKey)) {
+      const value = normalizedEntries.get(normalizedKey);
+      if (value !== undefined) {
+        return value;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function resolvePayloadDate(payload, keys) {
+  const value = resolvePayloadValue(payload, keys);
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const fromNumber = new Date(value);
+    return Number.isNaN(fromNumber.getTime()) ? null : fromNumber;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    if (!Number.isNaN(numeric) && String(numeric).length >= 10) {
+      const fromNumeric = new Date(numeric);
+      if (!Number.isNaN(fromNumeric.getTime())) {
+        return fromNumeric;
+      }
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  return null;
+}
+
+function normalizeKey(key) {
+  return String(key ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+function coerceString(value) {
+  if (value == null) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+
+  return '';
+}
+
+function coerceNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.replace(/[^0-9.,-]/g, '').replace(',', '.');
+    const parsed = Number.parseFloat(normalized);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function coerceBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value !== 0;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (['true', 'yes', 'on', '1', 'ok', 'sent', 'success'].includes(normalized)) {
+      return true;
+    }
+
+    if (['false', 'no', 'off', '0', 'error', 'failed'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function formatTitleCase(text) {
+  if (!text) {
+    return '';
+  }
+
+  return text
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function formatAutomationPrice(value) {
+  try {
+    return new Intl.NumberFormat('ru-RU', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} USD`;
+  }
+}
+
+function formatAutomationRatio(value) {
+  return value.toFixed(2);
 }
 
 function resolveAutomationEndpointPort(source) {
