@@ -26,6 +26,7 @@ const FALLBACK_TICKER_QUOTES = [
 ];
 const AUTOMATION_STATUS_ENDPOINT = '/api/zapier-hook/latest';
 const AUTOMATION_STATUS_REFRESH_INTERVAL = 60_000;
+const INDICATOR_GAUGE_MAX = 2;
 const automationWebhookPortSource =
   import.meta.env?.VITE_WEBHOOK_PORT ??
   (typeof window !== 'undefined' ? window.location.port : undefined) ??
@@ -63,6 +64,10 @@ const automationInsightsContainer = document.getElementById('automation-insights
 const automationInsightsMessage = document.getElementById('automation-insights-message');
 const automationInsightsTimestamp = document.getElementById('automation-insights-timestamp');
 const automationInsightsGrid = document.getElementById('automation-insights-grid');
+const indicatorGaugeContainer = document.getElementById('indicator-gauge-container');
+const indicatorGaugeNeedle = document.getElementById('indicator-gauge-needle');
+const indicatorGaugeSummary = document.getElementById('indicator-gauge-summary');
+const indicatorGaugeDetails = document.getElementById('indicator-gauge-details');
 const accordionTriggers = document.querySelectorAll('[data-accordion-trigger]');
 const tickerContent = document.getElementById('ticker-content');
 
@@ -203,6 +208,7 @@ async function refreshAutomationStatus() {
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
       renderAutomationInsights(null);
+      renderIndicatorGauge(null);
       return;
     }
 
@@ -217,6 +223,7 @@ async function refreshAutomationStatus() {
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
       renderAutomationInsights(null);
+      renderIndicatorGauge(null);
       return;
     }
 
@@ -233,10 +240,12 @@ async function refreshAutomationStatus() {
       latestAutomationEvent = payload;
       renderAutomationStatus(payload);
       renderAutomationInsights(payload);
+      renderIndicatorGauge(payload);
     } else {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
       renderAutomationInsights(null);
+      renderIndicatorGauge(null);
     }
 
     renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
@@ -245,6 +254,7 @@ async function refreshAutomationStatus() {
     latestAutomationEvent = null;
     renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
     renderAutomationInsights(null);
+    renderIndicatorGauge(null);
     renderAutomationPortStatus(automationWebhookPort, {
       statusLabel: 'недоступен',
       isError: true
@@ -1093,6 +1103,287 @@ function renderAutomationInsights(event) {
   } else {
     automationInsightsGrid.classList.add('hidden');
   }
+}
+
+function renderIndicatorGauge(event) {
+  if (
+    !indicatorGaugeContainer ||
+    !indicatorGaugeNeedle ||
+    !indicatorGaugeSummary ||
+    !indicatorGaugeDetails
+  ) {
+    return;
+  }
+
+  const payload = extractAutomationPayload(event);
+
+  if (!payload) {
+    hideIndicatorGauge();
+    return;
+  }
+
+  const ratioEth = coerceNumber(resolvePayloadValue(payload, ['mvrvz_eth', 'mvrvzeth', 'mvrvz_eth_value']));
+  const ratioBtc = coerceNumber(resolvePayloadValue(payload, ['mvrvz_btc', 'mvrvzbtc', 'mvrvz_btc_value']));
+  const assetHint = coerceString(
+    resolvePayloadValue(payload, [
+      'message_mvrvz',
+      'payload_alert_message_mvrvz',
+      'asset',
+      'symbol',
+      'ticker'
+    ])
+  );
+  const ticker = coerceString(resolvePayloadValue(payload, ['ticker', 'symbol', 'pair', 'market_pair']));
+
+  const primaryRatio = resolvePrimaryMvrvzValue(assetHint || ticker, ratioBtc, ratioEth);
+  const gaugeValue = primaryRatio ?? ratioEth ?? ratioBtc;
+
+  if (gaugeValue == null || !Number.isFinite(gaugeValue)) {
+    hideIndicatorGauge();
+    return;
+  }
+
+  const clampedValue = clampGaugeValue(gaugeValue);
+  const percent = Math.min(Math.max(clampedValue / INDICATOR_GAUGE_MAX, 0), 1) * 100;
+  indicatorGaugeNeedle.style.setProperty('--needle-position', `${percent}%`);
+
+  const assetLabel = formatIndicatorAssetLabel(assetHint || ticker);
+  const sentiment = resolveMvrvzSentiment(clampedValue);
+  indicatorGaugeNeedle.style.setProperty('--needle-color', sentiment.color);
+
+  indicatorGaugeContainer.classList.remove('hidden');
+
+  indicatorGaugeSummary.classList.remove('text-muted', 'text-success', 'text-danger', 'text-accent', 'text-accent2', 'text-text');
+  if (sentiment.tone === 'success') {
+    indicatorGaugeSummary.classList.add('text-success');
+  } else if (sentiment.tone === 'danger') {
+    indicatorGaugeSummary.classList.add('text-danger');
+  } else if (sentiment.tone === 'pending') {
+    indicatorGaugeSummary.classList.add('text-accent');
+  } else {
+    indicatorGaugeSummary.classList.add('text-text');
+  }
+
+  const formattedRatio = formatAutomationRatio(gaugeValue);
+  const summaryParts = [];
+  summaryParts.push(`${assetLabel ? `${assetLabel} ` : ''}MVRVZ = ${formattedRatio}`.trim());
+  summaryParts.push(`Зона: ${sentiment.label}`);
+  indicatorGaugeSummary.textContent = `${summaryParts.join(' • ')}. ${sentiment.description}`;
+
+  const details = buildIndicatorGaugeDetails(payload, event, {
+    ratioEth,
+    ratioBtc,
+    assetLabel,
+    sentiment,
+    gaugeValue
+  });
+
+  indicatorGaugeDetails.innerHTML = '';
+
+  if (details.length) {
+    details.forEach((detail) => {
+      const item = document.createElement('div');
+      item.className = 'indicator-gauge__detail-item';
+
+      const label = document.createElement('div');
+      label.className = 'indicator-gauge__detail-label';
+      label.textContent = detail.label;
+
+      const value = document.createElement('div');
+      value.className = 'indicator-gauge__detail-value';
+      value.textContent = detail.value;
+
+      item.append(label, value);
+      indicatorGaugeDetails.append(item);
+    });
+  } else {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'indicator-gauge__detail-item text-muted';
+    emptyState.textContent = 'Дополнительные данные недоступны.';
+    indicatorGaugeDetails.append(emptyState);
+  }
+}
+
+function hideIndicatorGauge() {
+  if (!indicatorGaugeContainer || !indicatorGaugeSummary || !indicatorGaugeDetails || !indicatorGaugeNeedle) {
+    return;
+  }
+
+  indicatorGaugeContainer.classList.add('hidden');
+  indicatorGaugeSummary.textContent = '';
+  indicatorGaugeSummary.classList.remove('text-success', 'text-danger', 'text-accent', 'text-text');
+  indicatorGaugeSummary.classList.add('text-muted');
+  indicatorGaugeDetails.innerHTML = '';
+  indicatorGaugeNeedle.style.removeProperty('--needle-position');
+  indicatorGaugeNeedle.style.removeProperty('--needle-color');
+}
+
+function clampGaugeValue(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return Math.min(Math.max(numeric, 0), INDICATOR_GAUGE_MAX);
+}
+
+function resolvePrimaryMvrvzValue(asset, btcValue, ethValue) {
+  if (!asset) {
+    return null;
+  }
+
+  const normalized = String(asset).toLowerCase();
+
+  if (normalized.includes('btc') || normalized.includes('bitcoin')) {
+    return btcValue ?? null;
+  }
+
+  if (normalized.includes('eth') || normalized.includes('ethereum')) {
+    return ethValue ?? null;
+  }
+
+  return null;
+}
+
+function formatIndicatorAssetLabel(rawValue) {
+  const value = coerceString(rawValue);
+  if (!value) {
+    return '';
+  }
+
+  if (value.length <= 6 || value.includes('/')) {
+    return value.toUpperCase();
+  }
+
+  return formatTitleCase(value);
+}
+
+function resolveMvrvzSentiment(value) {
+  if (value == null || !Number.isFinite(value)) {
+    return {
+      tone: 'neutral',
+      label: 'Нет данных',
+      description: 'Ожидаем поступления новых значений индикатора.',
+      color: '#f3f4fa'
+    };
+  }
+
+  if (value < 0.35) {
+    return {
+      tone: 'success',
+      label: 'Накопление',
+      description: 'Ончейн участники накапливают позицию — исторически благоприятная зона.',
+      color: '#46c078'
+    };
+  }
+
+  if (value < 0.75) {
+    return {
+      tone: 'pending',
+      label: 'Нейтрально',
+      description: 'Метрика находится в сбалансированной области — рынок без явного перекоса.',
+      color: '#7a88ff'
+    };
+  }
+
+  return {
+    tone: 'danger',
+    label: 'Перегрев',
+    description: 'Показатель повышен — возрастает вероятность фиксации прибыли и коррекции.',
+    color: '#dc5a78'
+  };
+}
+
+function buildIndicatorGaugeDetails(payload, event, context = {}) {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const details = [];
+
+  const ticker = coerceString(resolvePayloadValue(payload, ['ticker', 'symbol', 'pair', 'market_pair']));
+  const exchange = coerceString(resolvePayloadValue(payload, ['exchange', 'market', 'venue']));
+  const timeframe = coerceString(resolvePayloadValue(payload, ['timeframe', 'interval', 'resolution']));
+  const condition = coerceString(resolvePayloadValue(payload, ['condition', 'rule', 'direction']));
+  const price = coerceNumber(resolvePayloadValue(payload, ['price', 'close', 'last_price']));
+  const source = coerceString(resolvePayloadValue(payload, ['source', 'origin', 'channel']));
+  const message = coerceString(
+    resolvePayloadValue(payload, ['message', 'alert', 'payload_alert_message', 'payload alert message'])
+  );
+
+  const triggeredDate =
+    resolvePayloadDate(payload, ['triggered_at', 'time']) || resolvePayloadDate(event, ['triggeredAt']);
+  const receivedDate =
+    resolvePayloadDate(payload, ['received_at']) || resolvePayloadDate(event, ['receivedAt']);
+
+  if (ticker) {
+    details.push({ label: 'Пара', value: ticker.toUpperCase() });
+  }
+
+  if (exchange) {
+    details.push({ label: 'Биржа', value: exchange });
+  }
+
+  if (timeframe) {
+    details.push({ label: 'Таймфрейм', value: timeframe.toUpperCase() });
+  }
+
+  if (condition) {
+    details.push({ label: 'Условие', value: formatTitleCase(condition) });
+  }
+
+  if (price != null) {
+    details.push({ label: 'Цена отчёта', value: formatAutomationPrice(price) });
+  }
+
+  if (context.ratioEth != null) {
+    details.push({ label: 'MVRVZ (ETH)', value: formatAutomationRatio(context.ratioEth) });
+  }
+
+  if (context.ratioBtc != null) {
+    details.push({ label: 'MVRVZ (BTC)', value: formatAutomationRatio(context.ratioBtc) });
+  }
+
+  if (source) {
+    details.push({ label: 'Источник', value: formatTitleCase(source) });
+  }
+
+  if (triggeredDate instanceof Date && !Number.isNaN(triggeredDate.getTime())) {
+    const iso = triggeredDate.toISOString();
+    details.push({
+      label: 'Сигнал',
+      value: `${formatDateTime(iso)} (${formatRelative(iso)})`
+    });
+  }
+
+  if (receivedDate instanceof Date && !Number.isNaN(receivedDate.getTime())) {
+    const iso = receivedDate.toISOString();
+    details.push({
+      label: 'Получено',
+      value: `${formatDateTime(iso)} (${formatRelative(iso)})`
+    });
+  }
+
+  if (message) {
+    details.push({ label: 'Сообщение', value: message });
+  }
+
+  if (context.assetLabel) {
+    details.push({ label: 'Актив индикатора', value: context.assetLabel });
+  }
+
+  if (context.gaugeValue != null && Number.isFinite(context.gaugeValue)) {
+    details.push({
+      label: 'Текущее значение',
+      value: formatAutomationRatio(context.gaugeValue)
+    });
+  }
+
+  if (context.sentiment?.description) {
+    details.push({ label: 'Комментарий', value: context.sentiment.description });
+  }
+
+  return details;
 }
 
 function extractAutomationPayload(event) {

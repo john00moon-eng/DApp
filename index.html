@@ -375,6 +375,26 @@
               </div>
               <div id="automation-insights-grid" class="mt-4 grid gap-3 sm:grid-cols-2"></div>
             </div>
+            <div id="indicator-gauge-container" class="mt-6 hidden">
+              <div class="flex flex-col gap-3">
+                <span class="text-xs uppercase tracking-wide text-muted">MVRVZ индикатор</span>
+                <div class="indicator-gauge" role="img" aria-live="polite">
+                  <div class="indicator-gauge__track">
+                    <div class="indicator-gauge__zone indicator-gauge__zone--accumulation" aria-hidden="true">Накопление</div>
+                    <div class="indicator-gauge__zone indicator-gauge__zone--neutral" aria-hidden="true">Нейтрально</div>
+                    <div class="indicator-gauge__zone indicator-gauge__zone--distribution" aria-hidden="true">Перегрев</div>
+                    <div id="indicator-gauge-needle" class="indicator-gauge__needle" aria-hidden="true"></div>
+                  </div>
+                  <div class="indicator-gauge__labels" aria-hidden="true">
+                    <span>0</span>
+                    <span>1</span>
+                    <span>2</span>
+                  </div>
+                </div>
+                <p id="indicator-gauge-summary" class="indicator-gauge__summary text-sm text-muted"></p>
+              </div>
+              <div id="indicator-gauge-details" class="indicator-gauge__details mt-4 grid gap-3 sm:grid-cols-2"></div>
+            </div>
           </div>
         </div>
       </div>
