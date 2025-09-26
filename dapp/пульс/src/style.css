@@ -66,6 +66,97 @@
     @apply border border-grid/40 bg-card/80 backdrop-blur rounded-2xl shadow-card;
   }
 
+  .indicator-gauge {
+    @apply flex flex-col gap-2 rounded-2xl border border-grid/40 bg-card/80 p-4;
+  }
+
+  .indicator-gauge__track {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-radius: 9999px;
+    overflow: hidden;
+    min-height: 3.5rem;
+    background: linear-gradient(90deg, rgba(33, 37, 52, 0.85), rgba(33, 37, 52, 0.6));
+  }
+
+  .indicator-gauge__zone {
+    @apply flex items-center justify-center px-3 text-[10px] font-semibold uppercase tracking-[0.18em];
+    color: rgba(235, 237, 244, 0.82);
+    letter-spacing: 0.18em;
+  }
+
+  .indicator-gauge__zone--accumulation {
+    background: linear-gradient(135deg, rgba(70, 192, 120, 0.25), rgba(70, 192, 120, 0.45));
+  }
+
+  .indicator-gauge__zone--neutral {
+    background: linear-gradient(135deg, rgba(120, 120, 200, 0.2), rgba(120, 120, 200, 0.35));
+  }
+
+  .indicator-gauge__zone--distribution {
+    background: linear-gradient(135deg, rgba(220, 90, 120, 0.3), rgba(220, 90, 120, 0.5));
+  }
+
+  .indicator-gauge__needle {
+    position: absolute;
+    top: 0.75rem;
+    bottom: 0.75rem;
+    width: 0;
+    left: var(--needle-position, 50%);
+    transform: translateX(-50%);
+  }
+
+  .indicator-gauge__needle::before {
+    content: '';
+    position: absolute;
+    top: -0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 9999px;
+    border: 3px solid rgba(12, 13, 19, 0.65);
+    background: var(--needle-color, #f3f4fa);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+  }
+
+  .indicator-gauge__needle::after {
+    content: '';
+    position: absolute;
+    top: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0.35rem;
+    bottom: -0.85rem;
+    border-radius: 9999px;
+    background: linear-gradient(180deg, var(--needle-color, #f3f4fa), rgba(243, 244, 250, 0));
+  }
+
+  .indicator-gauge__labels {
+    @apply mt-2 flex items-center justify-between text-[11px] uppercase tracking-wide text-muted;
+  }
+
+  .indicator-gauge__summary {
+    @apply font-semibold text-text;
+  }
+
+  .indicator-gauge__details {
+    @apply grid gap-3;
+  }
+
+  .indicator-gauge__detail-item {
+    @apply rounded-xl bg-surface/70 p-4;
+  }
+
+  .indicator-gauge__detail-label {
+    @apply text-[11px] uppercase tracking-wide text-muted;
+  }
+
+  .indicator-gauge__detail-value {
+    @apply mt-2 text-sm font-semibold text-text;
+  }
+
   .ticker-container {
     @apply relative flex items-center overflow-hidden border-y border-grid/40 bg-card/80 px-4 py-2 text-xs text-muted md:text-sm;
   }
