@@ -38,27 +38,27 @@
     @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide;
   }
 
-  .port-indicator {
+  .endpoint-indicator {
     @apply inline-flex items-center gap-2 rounded-full border border-grid/40 bg-surface/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted transition-colors;
   }
 
-  .port-indicator__label {
+  .endpoint-indicator__label {
     @apply text-muted;
   }
 
-  .port-indicator__value {
+  .endpoint-indicator__value {
     @apply font-mono text-xs;
   }
 
-  .port-indicator__status {
+  .endpoint-indicator__status {
     @apply text-xs;
   }
 
-  .port-indicator--ok {
+  .endpoint-indicator--ok {
     @apply border-success/40 bg-success/10 text-success;
   }
 
-  .port-indicator--error {
+  .endpoint-indicator--error {
     @apply border-danger/40 bg-danger/10 text-danger;
   }
 

@@ -24,17 +24,36 @@ const FALLBACK_TICKER_QUOTES = [
   { symbol: 'ADA', price: '$0,48', change: '+1.1%' },
   { symbol: 'DOGE', price: '$0,14', change: '+4.2%' }
 ];
-const AUTOMATION_STATUS_ENDPOINT = '/api/zapier-hook/latest';
+const automationWebhookBase = (() => {
+  const explicitBase =
+    import.meta.env?.VITE_WEBHOOK_API_BASE ?? import.meta.env?.VITE_WEBHOOK_URL ?? '';
+
+  if (explicitBase) {
+    const normalized = String(explicitBase).trim();
+    if (normalized) {
+      return normalized.replace(/\/$/, '');
+    }
+  }
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/$/, '');
+  }
+
+  return '';
+})();
+
+const buildAutomationApiUrl = (path) => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  if (!automationWebhookBase) {
+    return normalizedPath;
+  }
+  return `${automationWebhookBase}${normalizedPath}`;
+};
+
+const AUTOMATION_STATUS_ENDPOINT = buildAutomationApiUrl('/api/zapier-hook/latest');
 const AUTOMATION_STATUS_REFRESH_INTERVAL = 60_000;
 const INDICATOR_GAUGE_MAX = 2;
-const automationWebhookPortSource =
-  import.meta.env?.VITE_WEBHOOK_PORT ??
-  (typeof window !== 'undefined' ? window.location.port : undefined) ??
-  '3001';
-const automationWebhookPort =
-  typeof automationWebhookPortSource === 'string'
-    ? automationWebhookPortSource.trim() || '3001'
-    : String(automationWebhookPortSource ?? '3001');
+const automationWebhookEndpoint = buildAutomationApiUrl('/api/zapier-hook');
 
 initHeroAnimations();
 
@@ -59,7 +78,7 @@ const coinSummaryStopLossEl = document.getElementById('coin-summary-stop-loss');
 const coinSummarySignalTimeEl = document.getElementById('coin-summary-signal-time');
 const automationStatusContainer = document.getElementById('automation-status');
 const automationStatusBadge = document.getElementById('automation-status-badge');
-const automationPortIndicator = document.getElementById('automation-port-indicator');
+const automationEndpointIndicator = document.getElementById('automation-endpoint-indicator');
 const automationInsightsContainer = document.getElementById('automation-insights');
 const automationInsightsMessage = document.getElementById('automation-insights-message');
 const automationInsightsTimestamp = document.getElementById('automation-insights-timestamp');
@@ -162,7 +181,7 @@ function scheduleTickerRefresh() {
 }
 
 function initAutomationStatus() {
-  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationEndpointIndicator) {
     return;
   }
 
@@ -175,7 +194,7 @@ function scheduleAutomationStatusRefresh() {
     clearInterval(automationStatusTimerId);
   }
 
-  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationEndpointIndicator) {
     automationStatusTimerId = null;
     return;
   }
@@ -190,7 +209,7 @@ async function refreshAutomationStatus() {
     return;
   }
 
-  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationEndpointIndicator) {
     return;
   }
 
@@ -201,12 +220,12 @@ async function refreshAutomationStatus() {
       headers: { Accept: 'application/json' }
     });
 
-    const resolvedPort = resolveAutomationEndpointPort(response);
+    const resolvedEndpoint = resolveAutomationEndpointUrl(response);
 
     if (response.status === 204) {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
-      renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+      renderAutomationEndpointStatus(resolvedEndpoint, { statusLabel: 'OK' });
       renderAutomationInsights(null);
       renderIndicatorGauge(null);
       return;
@@ -221,7 +240,7 @@ async function refreshAutomationStatus() {
     if (!rawPayload) {
       latestAutomationEvent = null;
       renderAutomationStatus(null, { message: 'Нет событий автоматизации.' });
-      renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+      renderAutomationEndpointStatus(resolvedEndpoint, { statusLabel: 'OK' });
       renderAutomationInsights(null);
       renderIndicatorGauge(null);
       return;
@@ -248,14 +267,14 @@ async function refreshAutomationStatus() {
       renderIndicatorGauge(null);
     }
 
-    renderAutomationPortStatus(resolvedPort, { statusLabel: 'OK' });
+    renderAutomationEndpointStatus(resolvedEndpoint, { statusLabel: 'OK' });
   } catch (error) {
     console.error('Не удалось получить статус автоматизаций', error);
     latestAutomationEvent = null;
     renderAutomationStatus(null, { message: 'Webhook недоступен', isError: true });
     renderAutomationInsights(null);
     renderIndicatorGauge(null);
-    renderAutomationPortStatus(automationWebhookPort, {
+    renderAutomationEndpointStatus(automationWebhookEndpoint, {
       statusLabel: 'недоступен',
       isError: true
     });
@@ -876,33 +895,39 @@ function toggleAccordion(trigger, panel) {
   }
 }
 
-function renderAutomationPortStatus(port, options = {}) {
-  if (!automationPortIndicator) {
+function renderAutomationEndpointStatus(endpoint, options = {}) {
+  if (!automationEndpointIndicator) {
     return;
   }
 
   const { statusLabel = null, isError = false } = options;
-  const normalizedPort =
-    typeof port === 'number' || typeof port === 'string' ? String(port).trim() : '';
-  const fallbackPort =
-    typeof automationWebhookPort === 'string'
-      ? automationWebhookPort.trim()
-      : String(automationWebhookPort ?? '');
-  const portText = normalizedPort || fallbackPort || '—';
+  const normalizedEndpoint =
+    typeof endpoint === 'string' ? endpoint.trim() : '';
+  const fallbackEndpoint =
+    typeof automationWebhookEndpoint === 'string'
+      ? automationWebhookEndpoint.trim()
+      : String(automationWebhookEndpoint ?? '');
+  const endpointText = normalizedEndpoint || fallbackEndpoint || '—';
   const resolvedStatus = statusLabel || (isError ? 'недоступен' : 'OK');
 
-  automationPortIndicator.classList.remove('hidden', 'port-indicator--ok', 'port-indicator--error');
-  automationPortIndicator.classList.add(isError ? 'port-indicator--error' : 'port-indicator--ok');
-  const labelEl = automationPortIndicator.querySelector('.port-indicator__label');
-  const valueEl = automationPortIndicator.querySelector('.port-indicator__value');
-  const statusEl = automationPortIndicator.querySelector('.port-indicator__status');
+  automationEndpointIndicator.classList.remove(
+    'hidden',
+    'endpoint-indicator--ok',
+    'endpoint-indicator--error'
+  );
+  automationEndpointIndicator.classList.add(
+    isError ? 'endpoint-indicator--error' : 'endpoint-indicator--ok'
+  );
+  const labelEl = automationEndpointIndicator.querySelector('.endpoint-indicator__label');
+  const valueEl = automationEndpointIndicator.querySelector('.endpoint-indicator__value');
+  const statusEl = automationEndpointIndicator.querySelector('.endpoint-indicator__status');
 
   if (labelEl) {
-    labelEl.textContent = 'Webhook порт';
+    labelEl.textContent = 'Webhook адрес';
   }
 
   if (valueEl) {
-    valueEl.textContent = portText;
+    valueEl.textContent = endpointText;
   }
 
   if (statusEl) {
@@ -910,12 +935,12 @@ function renderAutomationPortStatus(port, options = {}) {
   }
 
   if (!valueEl || !statusEl) {
-    automationPortIndicator.textContent = `Webhook порт ${portText} • ${resolvedStatus}`;
+    automationEndpointIndicator.textContent = `Webhook адрес ${endpointText} • ${resolvedStatus}`;
   }
 }
 
 function renderAutomationStatus(event, options = {}) {
-  if (!automationStatusContainer && !automationStatusBadge && !automationPortIndicator) {
+  if (!automationStatusContainer && !automationStatusBadge && !automationEndpointIndicator) {
     return;
   }
 
@@ -1735,8 +1760,8 @@ function formatAutomationRatio(value) {
   return value.toFixed(2);
 }
 
-function resolveAutomationEndpointPort(source) {
-  const fallback = automationWebhookPort;
+function resolveAutomationEndpointUrl(source) {
+  const fallback = automationWebhookEndpoint;
   if (!source) {
     return fallback;
   }
@@ -1752,7 +1777,11 @@ function resolveAutomationEndpointPort(source) {
         ? window.location.origin
         : 'http://localhost';
     const parsed = new URL(candidateUrl, base);
-    return parsed.port || fallback;
+    const normalisedPath = parsed.pathname.replace(/\/latest$/, '');
+    parsed.pathname = normalisedPath || '/api/zapier-hook';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
   } catch (error) {
     return fallback;
   }
