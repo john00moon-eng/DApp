@@ -1,0 +1,6 @@
+<svg width="512" height="128" viewBox="0 0 512 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="128" fill="#080A0E"/>
+  <path d="M40 64 C60 40, 80 88, 100 64 C120 40, 140 88, 160 64" stroke="#FF3C78" stroke-width="6" fill="none"/>
+  <polyline points="170,64 190,64 200,48 210,80 220,56 240,56" fill="none" stroke="#FF3C78" stroke-width="6"/>
+  <text x="260" y="80" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="40" fill="#FFFFFF">Pulse Protocol</text>
+</svg>
